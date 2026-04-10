@@ -30,6 +30,10 @@ export default function App() {
     status: "Bekliyor",
   });
 
+  const [searchText, setSearchText] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+
   useEffect(() => {
     injectGlobalStyles();
 
@@ -241,6 +245,25 @@ export default function App() {
     ).length;
   }, [leaveRequests]);
 
+  const filteredLeaveRequests = useMemo(() => {
+    return leaveRequests.filter((item) => {
+      const person = item.employees?.full_name?.toLowerCase() || "";
+      const note = item.note?.toLowerCase() || "";
+      const q = searchText.trim().toLowerCase();
+
+      const matchesSearch =
+        !q ||
+        person.includes(q) ||
+        note.includes(q) ||
+        item.leave_type?.toLowerCase().includes(q);
+
+      const matchesStatus = !statusFilter || item.status === statusFilter;
+      const matchesType = !typeFilter || item.leave_type === typeFilter;
+
+      return matchesSearch && matchesStatus && matchesType;
+    });
+  }, [leaveRequests, searchText, statusFilter, typeFilter]);
+
   const canManage = profile?.role === "admin" || profile?.role === "manager";
   const canDelete = profile?.role === "admin";
 
@@ -444,80 +467,171 @@ export default function App() {
           </form>
         </Section>
 
-        <Section title={`📋 İzin Kayıtları (${leaveRequests.length})`}>
+        <Section title={`📋 İzin Kayıt Tablosu (${filteredLeaveRequests.length})`}>
+          <div style={filterBarStyle}>
+            <input
+              placeholder="İsim, not veya izin türü ara..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={inputStyle}
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Tüm Durumlar</option>
+              <option value="Bekliyor">Bekliyor</option>
+              <option value="Onaylandı">Onaylandı</option>
+              <option value="Reddedildi">Reddedildi</option>
+            </select>
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">Tüm Türler</option>
+              <option value="Tam Gün İzin">Tam Gün İzin</option>
+              <option value="Yarım Gün İzin">Yarım Gün İzin</option>
+              <option value="Yıllık İzin">Yıllık İzin</option>
+              <option value="Mazeret İzni">Mazeret İzni</option>
+              <option value="Rapor">Rapor</option>
+              <option value="Ücretsiz İzin">Ücretsiz İzin</option>
+            </select>
+          </div>
+
           {loading ? (
             <p>Yükleniyor...</p>
-          ) : leaveRequests.length === 0 ? (
-            <p>Henüz izin kaydı yok</p>
+          ) : filteredLeaveRequests.length === 0 ? (
+            <p>Kayıt bulunamadı</p>
           ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={tableStyle}>
-                <thead>
-                  <tr>
-                    <th style={thStyle}>Personel</th>
-                    <th style={thStyle}>Tür</th>
-                    <th style={thStyle}>Başlangıç</th>
-                    <th style={thStyle}>Bitiş</th>
-                    <th style={thStyle}>Durum</th>
-                    <th style={thStyle}>Not</th>
-                    <th style={thStyle}>İşlem</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leaveRequests.map((item) => (
-                    <tr key={item.id}>
-                      <td style={tdStyle}>{item.employees?.full_name || "-"}</td>
-                      <td style={tdStyle}>{item.leave_type}</td>
-                      <td style={tdStyle}>{formatDateTR(item.start_date)}</td>
-                      <td style={tdStyle}>{formatDateTR(item.end_date)}</td>
-                      <td style={tdStyle}>
-                        <span style={getStatusBadgeStyle(item.status)}>
-                          {item.status}
-                        </span>
-                      </td>
-                      <td style={tdStyle}>{item.note || "-"}</td>
-                      <td style={tdStyle}>
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          {canManage && (
-                            <>
-                              <button
-                                onClick={() => updateStatus(item.id, "Onaylandı")}
-                                style={smallButtonStyle}
-                              >
-                                Onayla
-                              </button>
-                              <button
-                                onClick={() => updateStatus(item.id, "Reddedildi")}
-                                style={smallButtonStyle}
-                              >
-                                Reddet
-                              </button>
-                              <button
-                                onClick={() => updateStatus(item.id, "Bekliyor")}
-                                style={smallButtonStyle}
-                              >
-                                Bekliyor
-                              </button>
-                            </>
-                          )}
-
-                          {canDelete && (
-                            <button
-                              onClick={() => deleteLeave(item.id)}
-                              style={{ ...smallButtonStyle, background: "#7f1d1d" }}
-                            >
-                              Sil
-                            </button>
-                          )}
-
-                          {!canManage && !canDelete && <span>-</span>}
-                        </div>
-                      </td>
+            <>
+              <div className="desktop-table" style={{ overflowX: "auto" }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Personel</th>
+                      <th style={thStyle}>Tür</th>
+                      <th style={thStyle}>Başlangıç</th>
+                      <th style={thStyle}>Bitiş</th>
+                      <th style={thStyle}>Durum</th>
+                      <th style={thStyle}>Not</th>
+                      <th style={thStyle}>İşlem</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {filteredLeaveRequests.map((item) => (
+                      <tr key={item.id}>
+                        <td style={tdStyle}>{item.employees?.full_name || "-"}</td>
+                        <td style={tdStyle}>{item.leave_type}</td>
+                        <td style={tdStyle}>{formatDateTR(item.start_date)}</td>
+                        <td style={tdStyle}>{formatDateTR(item.end_date)}</td>
+                        <td style={tdStyle}>
+                          <span style={getStatusBadgeStyle(item.status)}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td style={tdStyle}>{item.note || "-"}</td>
+                        <td style={tdStyle}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {canManage && (
+                              <>
+                                <button
+                                  onClick={() => updateStatus(item.id, "Onaylandı")}
+                                  style={smallButtonStyle}
+                                >
+                                  Onayla
+                                </button>
+                                <button
+                                  onClick={() => updateStatus(item.id, "Reddedildi")}
+                                  style={smallButtonStyle}
+                                >
+                                  Reddet
+                                </button>
+                                <button
+                                  onClick={() => updateStatus(item.id, "Bekliyor")}
+                                  style={smallButtonStyle}
+                                >
+                                  Bekliyor
+                                </button>
+                              </>
+                            )}
+
+                            {canDelete && (
+                              <button
+                                onClick={() => deleteLeave(item.id)}
+                                style={{ ...smallButtonStyle, background: "#7f1d1d" }}
+                              >
+                                Sil
+                              </button>
+                            )}
+
+                            {!canManage && !canDelete && <span>-</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mobile-cards">
+                {filteredLeaveRequests.map((item) => (
+                  <div key={item.id} style={mobileLeaveCardStyle}>
+                    <div style={{ fontWeight: "bold", marginBottom: 8 }}>
+                      {item.employees?.full_name || "-"}
+                    </div>
+                    <div style={mobileRowStyle}>
+                      <span style={mobileLabelStyle}>Tür</span>
+                      <span>{item.leave_type}</span>
+                    </div>
+                    <div style={mobileRowStyle}>
+                      <span style={mobileLabelStyle}>Başlangıç</span>
+                      <span>{formatDateTR(item.start_date)}</span>
+                    </div>
+                    <div style={mobileRowStyle}>
+                      <span style={mobileLabelStyle}>Bitiş</span>
+                      <span>{formatDateTR(item.end_date)}</span>
+                    </div>
+                    <div style={mobileRowStyle}>
+                      <span style={mobileLabelStyle}>Durum</span>
+                      <span style={getStatusBadgeStyle(item.status)}>{item.status}</span>
+                    </div>
+                    <div style={mobileRowStyle}>
+                      <span style={mobileLabelStyle}>Not</span>
+                      <span>{item.note || "-"}</span>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                      {canManage && (
+                        <>
+                          <button
+                            onClick={() => updateStatus(item.id, "Onaylandı")}
+                            style={smallButtonStyle}
+                          >
+                            Onayla
+                          </button>
+                          <button
+                            onClick={() => updateStatus(item.id, "Reddedildi")}
+                            style={smallButtonStyle}
+                          >
+                            Reddet
+                          </button>
+                        </>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => deleteLeave(item.id)}
+                          style={{ ...smallButtonStyle, background: "#7f1d1d" }}
+                        >
+                          Sil
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </Section>
       </div>
@@ -531,7 +645,6 @@ function BirthdayList({ items, emptyText, showUpcoming = false }) {
   return items.map((item) => (
     <div key={item.id} style={listItemStyle}>
       <div style={{ fontWeight: "bold", marginBottom: 6 }}>{item.full_name}</div>
-
       <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 8 }}>
         {showUpcoming
           ? `${formatBirthday(item.birth_date)} • ${item.daysLeft} gün kaldı`
@@ -543,7 +656,6 @@ function BirthdayList({ items, emptyText, showUpcoming = false }) {
         style={{
           ...smallButtonStyle,
           background: "#16a34a",
-          border: "1px solid rgba(255,255,255,0.08)",
         }}
       >
         WhatsApp Mesajı
@@ -722,7 +834,6 @@ function injectGlobalStyles() {
       box-sizing: border-box;
     }
 
-    table button:hover,
     button:hover {
       transform: translateY(-1px);
       filter: brightness(1.04);
@@ -733,9 +844,17 @@ function injectGlobalStyles() {
       color: rgba(255,255,255,0.45);
     }
 
+    .mobile-cards {
+      display: none;
+    }
+
     @media (max-width: 768px) {
-      .mobile-stack {
-        grid-template-columns: 1fr !important;
+      .desktop-table {
+        display: none;
+      }
+
+      .mobile-cards {
+        display: block;
       }
     }
   `;
@@ -797,6 +916,13 @@ const dateGridStyle = {
   display: "grid",
   gridTemplateColumns: "1fr 1fr",
   gap: 12,
+};
+
+const filterBarStyle = {
+  display: "grid",
+  gridTemplateColumns: "2fr 1fr 1fr",
+  gap: 12,
+  marginBottom: 16,
 };
 
 const cardStyle = {
@@ -888,6 +1014,28 @@ const tdStyle = {
   padding: 12,
   borderBottom: "1px solid #333",
   verticalAlign: "top",
+};
+
+const mobileLeaveCardStyle = {
+  padding: 14,
+  borderRadius: 14,
+  marginBottom: 12,
+  background: "rgba(10,14,24,0.72)",
+  border: "1px solid rgba(255,255,255,0.08)",
+};
+
+const mobileRowStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 10,
+  marginBottom: 8,
+  alignItems: "center",
+};
+
+const mobileLabelStyle = {
+  color: "rgba(255,255,255,0.7)",
+  fontSize: 13,
+  minWidth: 80,
 };
 
 const headerStyle = {
