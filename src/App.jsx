@@ -69,27 +69,12 @@ export default function App() {
 
   useEffect(() => {
     injectGlobalStyles();
-    let mounted = true;
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!mounted) return;
-      const currentSession = data.session || null;
-      setSession(currentSession);
-      if (currentSession) {
-        setShowLoginModal(false);
-        await loadAll();
-      } else {
-        setEmployees([]);
-        setLeaveRequests([]);
-        setLoading(false);
-        setShowLoginModal(true);
-      }
-    });
-
+    // Supabase v2: onAuthStateChange fires INITIAL_SESSION on page load,
+    // so getSession() is not needed and causes double loadAll() calls.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
-      if (!mounted) return;
       setSession(currentSession || null);
       if (currentSession) {
         setShowLoginModal(false);
@@ -102,10 +87,7 @@ export default function App() {
       }
     });
 
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   async function loadAll() {
@@ -151,7 +133,11 @@ export default function App() {
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) { addToast(error.message, "error"); return; }
-    // onAuthStateChange listener handles all state updates
+    setSession(null);
+    setEmployees([]);
+    setLeaveRequests([]);
+    setLoading(false);
+    setShowLoginModal(true);
   }
 
   // --- Employee CRUD ---
