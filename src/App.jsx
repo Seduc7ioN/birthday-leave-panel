@@ -151,11 +151,7 @@ export default function App() {
   async function signOut() {
     const { error } = await supabase.auth.signOut();
     if (error) { addToast(error.message, "error"); return; }
-    setSession(null);
-    setEmployees([]);
-    setLeaveRequests([]);
-    setLoading(false);
-    setShowLoginModal(true);
+    // onAuthStateChange listener handles all state updates
   }
 
   // --- Employee CRUD ---
