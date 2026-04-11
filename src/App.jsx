@@ -24,12 +24,12 @@ const BDAY_TABS = [
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [profile, setProfile] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saveMessage, setSaveMessage] = useState("");
   const [birthdayTab, setBirthdayTab] = useState("today");
+  const [showLoginModal, setShowLoginModal] = useState(false);
 
   const [authForm, setAuthForm] = useState({
     email: "",
@@ -54,7 +54,6 @@ export default function App() {
 
   const birthdaySectionRef = useRef(null);
   const leaveSectionRef = useRef(null);
-  const loginSectionRef = useRef(null);
 
   useEffect(() => {
     injectGlobalStyles();
@@ -63,16 +62,18 @@ export default function App() {
 
     supabase.auth.getSession().then(async ({ data }) => {
       if (!mounted) return;
+
       const currentSession = data.session || null;
       setSession(currentSession);
 
       if (currentSession) {
-        await loadAll(currentSession.user.id);
+        setShowLoginModal(false);
+        await loadAll();
       } else {
-        setProfile(null);
         setEmployees([]);
         setLeaveRequests([]);
         setLoading(false);
+        setShowLoginModal(true);
       }
     });
 
@@ -84,12 +85,13 @@ export default function App() {
       setSession(currentSession || null);
 
       if (currentSession) {
-        await loadAll(currentSession.user.id);
+        setShowLoginModal(false);
+        await loadAll();
       } else {
-        setProfile(null);
         setEmployees([]);
         setLeaveRequests([]);
         setLoading(false);
+        setShowLoginModal(true);
       }
     });
 
@@ -99,25 +101,28 @@ export default function App() {
     };
   }, []);
 
-  async function loadAll(userId) {
+  async function loadAll() {
     setLoading(true);
 
-    const [{ data: p, error: pErr }, { data: e }, { data: l }] = await Promise.all([
-      supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
-      supabase.from("employees").select("*").order("full_name", { ascending: true }),
-      supabase
-        .from("leave_requests")
-        .select("*, employees(full_name)")
-        .order("start_date", { ascending: false }),
-    ]);
+    const [{ data: employeeData, error: employeeError }, { data: leaveData, error: leaveError }] =
+      await Promise.all([
+        supabase.from("employees").select("*").order("full_name", { ascending: true }),
+        supabase
+          .from("leave_requests")
+          .select("*, employees(full_name)")
+          .order("start_date", { ascending: false }),
+      ]);
 
-    if (pErr) {
-      console.error("Profile error:", pErr.message);
+    if (employeeError) {
+      console.error("Employees error:", employeeError.message);
     }
 
-    setProfile(p || null);
-    setEmployees(e || []);
-    setLeaveRequests(l || []);
+    if (leaveError) {
+      console.error("Leave requests error:", leaveError.message);
+    }
+
+    setEmployees(employeeData || []);
+    setLeaveRequests(leaveData || []);
     setLoading(false);
   }
 
@@ -127,7 +132,10 @@ export default function App() {
 
     if (error) {
       alert(error.message);
+      return;
     }
+
+    setShowLoginModal(false);
   }
 
   async function signUp() {
@@ -151,20 +159,17 @@ export default function App() {
 
   async function signOut() {
     const { error } = await supabase.auth.signOut();
+
     if (error) {
       alert(error.message);
       return;
     }
 
     setSession(null);
-    setProfile(null);
     setEmployees([]);
     setLeaveRequests([]);
     setLoading(false);
-
-    setTimeout(() => {
-      loginSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 50);
+    setShowLoginModal(true);
   }
 
   function handleAuthChange(e) {
@@ -183,6 +188,7 @@ export default function App() {
 
     if (!session) {
       setSaveMessage("Önce giriş yapmalısın.");
+      setShowLoginModal(true);
       return;
     }
 
@@ -215,7 +221,7 @@ export default function App() {
       status: "Bekliyor",
     });
 
-    await loadAll(session.user.id);
+    await loadAll();
     setStatusFilter("");
     scrollToRef(leaveSectionRef);
   }
@@ -233,7 +239,7 @@ export default function App() {
       return;
     }
 
-    await loadAll(session.user.id);
+    await loadAll();
   }
 
   async function deleteLeave(id) {
@@ -250,7 +256,7 @@ export default function App() {
       return;
     }
 
-    await loadAll(session.user.id);
+    await loadAll();
   }
 
   function scrollToRef(ref) {
@@ -265,9 +271,7 @@ export default function App() {
   function openLeaveSectionWithFilter(status = "", type = "") {
     setStatusFilter(status);
     setTypeFilter(type);
-    setTimeout(() => {
-      scrollToRef(leaveSectionRef);
-    }, 50);
+    setTimeout(() => scrollToRef(leaveSectionRef), 50);
   }
 
   const birthdayStats = useMemo(() => calculateBirthdayStats(employees), [employees]);
@@ -312,8 +316,8 @@ export default function App() {
   const activeBirthdayLabel =
     BDAY_TABS.find((tab) => tab.key === birthdayTab)?.label || "Bugün";
 
-  const canManage = profile?.role === "admin" || profile?.role === "manager";
-  const canDelete = profile?.role === "admin";
+  const canManage = !!session;
+  const canDelete = !!session;
 
   return (
     <div style={pageStyle}>
@@ -331,11 +335,9 @@ export default function App() {
               <h1 style={headerTitleStyle}>Doğum Günü + İzin Takip Sistemi</h1>
               <div style={headerMetaRowStyle}>
                 <span style={metaBadgeStyle}>
-                  👤 {session ? (profile?.full_name || profile?.email || "Kullanıcı") : "Misafir"}
+                  👤 {session?.user?.email || "Misafir"}
                 </span>
-                <span style={getRoleBadgeStyle(profile?.role)}>
-                  {profile?.role ? profile.role.toUpperCase() : "ROL YOK"}
-                </span>
+                <span style={getRoleBadgeStyle("admin")}>ADMIN</span>
               </div>
             </div>
           </div>
@@ -349,10 +351,7 @@ export default function App() {
             </div>
 
             {!session ? (
-              <button
-                onClick={() => scrollToRef(loginSectionRef)}
-                style={logoutButtonStyle}
-              >
+              <button onClick={() => setShowLoginModal(true)} style={logoutButtonStyle}>
                 Giriş
               </button>
             ) : (
@@ -363,47 +362,7 @@ export default function App() {
           </div>
         </header>
 
-        {!session && (
-          <div ref={loginSectionRef} style={{ maxWidth: 500, margin: "0 auto 24px auto", ...sectionStyle }}>
-            <div style={{ marginBottom: 18 }}>
-              <div style={headerTopLineStyle}>Oturum Aç</div>
-              <h2 style={{ margin: 0 }}>Giriş / Kayıt</h2>
-            </div>
-
-            <div style={{ display: "grid", gap: 12 }}>
-              <input
-                name="full_name"
-                placeholder="Ad Soyad"
-                value={authForm.full_name}
-                onChange={handleAuthChange}
-                style={inputStyle}
-              />
-              <input
-                name="email"
-                placeholder="E-posta"
-                value={authForm.email}
-                onChange={handleAuthChange}
-                style={inputStyle}
-              />
-              <input
-                name="password"
-                type="password"
-                placeholder="Şifre"
-                value={authForm.password}
-                onChange={handleAuthChange}
-                style={inputStyle}
-              />
-              <button onClick={signIn} style={buttonStyle}>
-                Giriş Yap
-              </button>
-              <button onClick={signUp} style={secondaryButtonStyle}>
-                Kayıt Ol
-              </button>
-            </div>
-          </div>
-        )}
-
-        {session && profile?.role && (
+        {session && (
           <>
             <div style={kpiGridStyle}>
               <Card title="👥 Personel" value={employees.length} />
@@ -660,8 +619,6 @@ export default function App() {
                                       Sil
                                     </button>
                                   )}
-
-                                  {!canManage && !canDelete && <span>-</span>}
                                 </div>
                               </td>
                             </tr>
@@ -733,12 +690,57 @@ export default function App() {
           </>
         )}
 
-        {session && !profile?.role && (
-          <Section title="⚠️ Erişim Uyarısı">
-            <p>Bu kullanıcı için rol bulunamadı. Profiles tablosunda rol ataması yapılmalı.</p>
+        {!session && (
+          <Section title="Bilgi">
+            <p>Paneli kullanmak için sağ üstten giriş yap.</p>
           </Section>
         )}
       </div>
+
+      {showLoginModal && (
+        <div style={modalBackdropStyle} onClick={() => setShowLoginModal(false)}>
+          <div style={modalCardStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={{ marginBottom: 18 }}>
+              <div style={headerTopLineStyle}>Oturum Aç</div>
+              <h2 style={{ margin: 0 }}>Giriş / Kayıt</h2>
+            </div>
+
+            <div style={{ display: "grid", gap: 12 }}>
+              <input
+                name="full_name"
+                placeholder="Ad Soyad"
+                value={authForm.full_name}
+                onChange={handleAuthChange}
+                style={inputStyle}
+              />
+              <input
+                name="email"
+                placeholder="E-posta"
+                value={authForm.email}
+                onChange={handleAuthChange}
+                style={inputStyle}
+              />
+              <input
+                name="password"
+                type="password"
+                placeholder="Şifre"
+                value={authForm.password}
+                onChange={handleAuthChange}
+                style={inputStyle}
+              />
+              <button onClick={signIn} style={buttonStyle}>
+                Giriş Yap
+              </button>
+              <button onClick={signUp} style={secondaryButtonStyle}>
+                Kayıt Ol
+              </button>
+              <button onClick={() => setShowLoginModal(false)} style={secondaryButtonStyle}>
+                Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -875,20 +877,6 @@ function openBirthdayWhatsApp(person) {
   window.open(url, "_blank");
 }
 
-function getStatusBadgeStyle(status) {
-  const base = {
-    display: "inline-block",
-    padding: "6px 10px",
-    borderRadius: 999,
-    fontSize: 12,
-    fontWeight: "bold",
-  };
-
-  if (status === "Onaylandı") return { ...base, background: "#14532d", color: "#bbf7d0" };
-  if (status === "Reddedildi") return { ...base, background: "#7f1d1d", color: "#fecaca" };
-  return { ...base, background: "#78350f", color: "#fde68a" };
-}
-
 function getRoleBadgeStyle(role) {
   const base = {
     display: "inline-flex",
@@ -901,28 +889,26 @@ function getRoleBadgeStyle(role) {
     border: "1px solid transparent",
   };
 
-  if (role === "admin") {
-    return {
-      ...base,
-      background: "rgba(220,38,38,0.18)",
-      color: "#fecaca",
-      border: "1px solid rgba(248,113,113,0.28)",
-    };
-  }
-  if (role === "manager") {
-    return {
-      ...base,
-      background: "rgba(37,99,235,0.18)",
-      color: "#bfdbfe",
-      border: "1px solid rgba(96,165,250,0.28)",
-    };
-  }
   return {
     ...base,
-    background: "rgba(245,158,11,0.18)",
-    color: "#fde68a",
-    border: "1px solid rgba(251,191,36,0.28)",
+    background: "rgba(220,38,38,0.18)",
+    color: "#fecaca",
+    border: "1px solid rgba(248,113,113,0.28)",
   };
+}
+
+function getStatusBadgeStyle(status) {
+  const base = {
+    display: "inline-block",
+    padding: "6px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: "bold",
+  };
+
+  if (status === "Onaylandı") return { ...base, background: "#14532d", color: "#bbf7d0" };
+  if (status === "Reddedildi") return { ...base, background: "#7f1d1d", color: "#fecaca" };
+  return { ...base, background: "#78350f", color: "#fde68a" };
 }
 
 function injectGlobalStyles() {
@@ -990,7 +976,8 @@ const pageStyle = {
 const overlayStyle = {
   position: "absolute",
   inset: 0,
-  background: `linear-gradient(135deg, rgba(3,7,18,0.82) 0%, rgba(10,15,28,0.74) 35%, rgba(17,24,39,0.70) 65%, rgba(2,6,23,0.82) 100%)`,
+  background:
+    "linear-gradient(135deg, rgba(3,7,18,0.82) 0%, rgba(10,15,28,0.74) 35%, rgba(17,24,39,0.70) 65%, rgba(2,6,23,0.82) 100%)",
   backdropFilter: "blur(8px)",
   WebkitBackdropFilter: "blur(8px)",
   zIndex: 0,
@@ -1266,4 +1253,27 @@ const logoutButtonStyle = {
   fontWeight: "bold",
   cursor: "pointer",
   boxShadow: "0 8px 20px rgba(0,0,0,0.22)",
+};
+
+const modalBackdropStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.55)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 16,
+  zIndex: 50,
+  backdropFilter: "blur(6px)",
+  WebkitBackdropFilter: "blur(6px)",
+};
+
+const modalCardStyle = {
+  width: "100%",
+  maxWidth: 460,
+  background: "rgba(17, 25, 40, 0.92)",
+  border: "1px solid rgba(255,255,255,0.12)",
+  borderRadius: 20,
+  padding: 22,
+  boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
 };
