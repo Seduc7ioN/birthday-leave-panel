@@ -103,7 +103,20 @@ export default function App() {
         .order("start_date", { ascending: false }),
     ]);
 
-    if (employeeError) console.error("Employees error:", employeeError.message);
+    // Token süresi dolmuşsa zorla çıkış yap
+    if (employeeError) {
+      console.error("Employees error:", employeeError.message);
+      const msg = employeeError.message || "";
+      if (msg.includes("JWT") || msg.includes("token") || employeeError.code === "PGRST301") {
+        await supabase.auth.signOut();
+        setSession(null);
+        setEmployees([]);
+        setLeaveRequests([]);
+        setLoading(false);
+        setShowLoginModal(true);
+        return;
+      }
+    }
     if (leaveError) console.error("Leave requests error:", leaveError.message);
 
     setEmployees(employeeData || []);
@@ -131,8 +144,7 @@ export default function App() {
   }
 
   async function signOut() {
-    const { error } = await supabase.auth.signOut();
-    if (error) { addToast(error.message, "error"); return; }
+    await supabase.auth.signOut(); // hata olsa bile state sıfırla
     setSession(null);
     setEmployees([]);
     setLeaveRequests([]);
