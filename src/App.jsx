@@ -51,6 +51,10 @@ export default function App() {
   // Takvim
   const [calendarDate, setCalendarDate] = useState(new Date());
 
+  // Personel arama & detay
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
+
   const [authForm, setAuthForm] = useState({ email: "", password: "", full_name: "" });
   const [form, setForm] = useState(EMPTY_LEAVE_FORM);
 
@@ -416,6 +420,50 @@ export default function App() {
   const activeBirthdayLabel =
     BDAY_TABS.find((tab) => tab.key === birthdayTab)?.label || "Bugün";
 
+  // Bu ay onaylanan toplam izin günü
+  const thisMonthLeaveDays = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    return leaveRequests
+      .filter((lr) => {
+        if (lr.status !== "Onaylandı") return false;
+        const s = new Date(lr.start_date);
+        return s.getFullYear() === y && s.getMonth() === m;
+      })
+      .reduce((sum, lr) => {
+        const d = Math.floor((new Date(lr.end_date) - new Date(lr.start_date)) / (1000 * 60 * 60 * 24)) + 1;
+        return sum + Math.max(d, 0);
+      }, 0);
+  }, [leaveRequests]);
+
+  // En çok izin kullanan personel (bu yıl, onaylanan)
+  const topLeaveEmployee = useMemo(() => {
+    const year = new Date().getFullYear();
+    const map = {};
+    leaveRequests.forEach((lr) => {
+      if (lr.status !== "Onaylandı") return;
+      if (new Date(lr.start_date).getFullYear() !== year) return;
+      const d = Math.floor((new Date(lr.end_date) - new Date(lr.start_date)) / (1000 * 60 * 60 * 24)) + 1;
+      map[lr.employee_id] = (map[lr.employee_id] || 0) + Math.max(d, 0);
+    });
+    const topId = Object.entries(map).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (!topId) return null;
+    const emp = employees.find((e) => String(e.id) === String(topId));
+    return emp ? { name: emp.full_name.split(" ")[0], days: map[topId] } : null;
+  }, [leaveRequests, employees]);
+
+  // Personel listesi arama filtresi
+  const filteredEmployees = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase();
+    if (!q) return employees;
+    return employees.filter(
+      (e) =>
+        e.full_name?.toLowerCase().includes(q) ||
+        e.phone?.toLowerCase().includes(q)
+    );
+  }, [employees, employeeSearch]);
+
   const canManage = !!session;
   const canDelete = !!session;
 
@@ -501,22 +549,37 @@ export default function App() {
                 value={todayOnLeaveCount}
                 onClick={() => openLeaveSectionWithFilter("", "")}
               />
+              <Card
+                title="📅 Bu Ay İzin (gün)"
+                value={thisMonthLeaveDays}
+                onClick={() => openLeaveSectionWithFilter("Onaylandı", "")}
+              />
+              <Card
+                title="🏆 En Çok İzinli"
+                value={topLeaveEmployee ? `${topLeaveEmployee.name} (${topLeaveEmployee.days}g)` : "-"}
+              />
             </div>
 
             {/* Employee Section */}
             <div ref={employeeSectionRef}>
               <Section
-                title={`👥 Personel Listesi (${employees.length})`}
+                title={`👥 Personel Listesi (${filteredEmployees.length})`}
                 action={
                   <button onClick={openAddEmployee} style={buttonStyle}>
                     + Personel Ekle
                   </button>
                 }
               >
+                <input
+                  placeholder="İsim veya telefon ara..."
+                  value={employeeSearch}
+                  onChange={(e) => setEmployeeSearch(e.target.value)}
+                  style={{ ...inputStyle, marginBottom: 14 }}
+                />
                 {loading ? (
                   <LoadingSkeleton rows={3} />
-                ) : employees.length === 0 ? (
-                  <p style={{ opacity: 0.6, margin: 0 }}>Henüz personel yok.</p>
+                ) : filteredEmployees.length === 0 ? (
+                  <p style={{ opacity: 0.6, margin: 0 }}>Personel bulunamadı.</p>
                 ) : (
                   <>
                     <div className="desktop-table" style={{ overflowX: "auto" }}>
@@ -530,9 +593,14 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {employees.map((emp) => (
-                            <tr key={emp.id} className="table-row">
-                              <td style={tdStyle}>{emp.full_name}</td>
+                          {filteredEmployees.map((emp) => (
+                            <tr
+                              key={emp.id}
+                              className="table-row"
+                              onClick={() => setSelectedEmployee(emp)}
+                              style={{ cursor: "pointer" }}
+                            >
+                              <td style={{ ...tdStyle, fontWeight: 600 }}>{emp.full_name}</td>
                               <td style={tdStyle}>
                                 {emp.birth_date ? formatDateTR(emp.birth_date) : "-"}
                               </td>
@@ -540,13 +608,13 @@ export default function App() {
                               <td style={tdStyle}>
                                 <div style={{ display: "flex", gap: 6 }}>
                                   <button
-                                    onClick={() => openEditEmployee(emp)}
+                                    onClick={(e) => { e.stopPropagation(); openEditEmployee(emp); }}
                                     style={smallButtonStyle}
                                   >
                                     Düzenle
                                   </button>
                                   <button
-                                    onClick={() => deleteEmployee(emp.id)}
+                                    onClick={(e) => { e.stopPropagation(); deleteEmployee(emp.id); }}
                                     style={{ ...smallButtonStyle, background: "rgba(127,29,29,0.75)", borderColor: "rgba(248,113,113,0.2)" }}
                                   >
                                     Sil
@@ -560,8 +628,12 @@ export default function App() {
                     </div>
 
                     <div className="mobile-cards">
-                      {employees.map((emp) => (
-                        <div key={emp.id} style={mobileLeaveCardStyle}>
+                      {filteredEmployees.map((emp) => (
+                        <div
+                          key={emp.id}
+                          style={{ ...mobileLeaveCardStyle, cursor: "pointer" }}
+                          onClick={() => setSelectedEmployee(emp)}
+                        >
                           <div style={{ fontWeight: "bold", marginBottom: 8 }}>{emp.full_name}</div>
                           <div style={mobileRowStyle}>
                             <span style={mobileLabelStyle}>Doğum</span>
@@ -572,11 +644,14 @@ export default function App() {
                             <span>{emp.phone || "-"}</span>
                           </div>
                           <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-                            <button onClick={() => openEditEmployee(emp)} style={smallButtonStyle}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openEditEmployee(emp); }}
+                              style={smallButtonStyle}
+                            >
                               Düzenle
                             </button>
                             <button
-                              onClick={() => deleteEmployee(emp.id)}
+                              onClick={(e) => { e.stopPropagation(); deleteEmployee(emp.id); }}
                               style={{ ...smallButtonStyle, background: "rgba(127,29,29,0.75)" }}
                             >
                               Sil
@@ -1147,6 +1222,90 @@ export default function App() {
         </div>
       )}
 
+      {/* Personel Detay Modalı */}
+      {selectedEmployee && (
+        <div style={modalBackdropStyle} onClick={() => setSelectedEmployee(null)}>
+          <div
+            style={{ ...modalCardStyle, maxWidth: 560 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ marginBottom: 20 }}>
+              <div style={headerTopLineStyle}>Personel Detayı</div>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
+                {selectedEmployee.full_name}
+              </h2>
+              <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                {selectedEmployee.birth_date && (
+                  <span style={metaBadgeStyle}>
+                    🎂 {formatDateTR(selectedEmployee.birth_date)}
+                  </span>
+                )}
+                {selectedEmployee.phone && (
+                  <span style={metaBadgeStyle}>📞 {selectedEmployee.phone}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Bu personelin izin özeti */}
+            {(() => {
+              const empLeaves = leaveRequests
+                .filter((lr) => lr.employee_id === selectedEmployee.id)
+                .sort((a, b) => (a.start_date < b.start_date ? 1 : -1));
+              const approvedDays = empLeaves
+                .filter((lr) => lr.status === "Onaylandı")
+                .reduce((sum, lr) => {
+                  const d = Math.floor((new Date(lr.end_date) - new Date(lr.start_date)) / (1000 * 60 * 60 * 24)) + 1;
+                  return sum + Math.max(d, 0);
+                }, 0);
+
+              return (
+                <>
+                  <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                    <div style={empStatCardStyle}>
+                      <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Toplam İzin</div>
+                      <div style={{ fontSize: 22, fontWeight: 900 }}>{empLeaves.length}</div>
+                    </div>
+                    <div style={empStatCardStyle}>
+                      <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 }}>Onaylanan Gün</div>
+                      <div style={{ fontSize: 22, fontWeight: 900, color: "#93c5fd" }}>{approvedDays}g</div>
+                    </div>
+                  </div>
+
+                  {empLeaves.length === 0 ? (
+                    <p style={{ opacity: 0.6, margin: 0 }}>İzin kaydı yok.</p>
+                  ) : (
+                    <div style={{ maxHeight: 300, overflowY: "auto", display: "grid", gap: 8 }}>
+                      {empLeaves.map((lr) => (
+                        <div key={lr.id} style={empLeaveRowStyle}>
+                          <div style={{ fontWeight: 700, fontSize: 14 }}>{lr.leave_type}</div>
+                          <div style={{ fontSize: 13, opacity: 0.75, margin: "3px 0" }}>
+                            {formatDateTR(lr.start_date)} → {formatDateTR(lr.end_date)}
+                            <span style={{ marginLeft: 8, color: "#93c5fd", fontWeight: 700 }}>
+                              {calcDays(lr.start_date, lr.end_date)}
+                            </span>
+                          </div>
+                          {lr.note && <div style={{ fontSize: 12, opacity: 0.6 }}>{lr.note}</div>}
+                          <span style={{ ...getStatusBadgeStyle(lr.status), marginTop: 4 }}>
+                            {lr.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            <button
+              onClick={() => setSelectedEmployee(null)}
+              style={{ ...secondaryButtonStyle, marginTop: 16, width: "100%" }}
+            >
+              Kapat
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Toast Notifications */}
       <div style={toastContainerStyle}>
         {toasts.map((toast) => (
@@ -1438,7 +1597,7 @@ function LeaveCalendar({ leaveRequests, calendarDate, setCalendarDate }) {
               </div>
 
               {leaves.slice(0, 3).map((lr) => (
-                <div key={lr.id} style={calendarChipStyle(lr.status)}>
+                <div key={lr.id} style={calendarChipStyle(lr.leave_type)}>
                   {(lr.employees?.full_name || "?").split(" ")[0]}
                 </div>
               ))}
@@ -1453,15 +1612,19 @@ function LeaveCalendar({ leaveRequests, calendarDate, setCalendarDate }) {
       </div>
 
       {/* Legend */}
-      <div style={{ display: "flex", gap: 14, marginTop: 14, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-          <div style={{ ...calendarChipStyle("Onaylandı"), position: "static", fontSize: 11 }}>Onay</div>
-          <span style={{ opacity: 0.7 }}>Onaylandı</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-          <div style={{ ...calendarChipStyle("Bekliyor"), position: "static", fontSize: 11 }}>Bekl.</div>
-          <span style={{ opacity: 0.7 }}>Bekliyor</span>
-        </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        {[
+          ["Tam Gün İzin", "Tam Gün"],
+          ["Yıllık İzin", "Yıllık"],
+          ["Mazeret İzni", "Mazeret"],
+          ["Rapor", "Rapor"],
+          ["Yarım Gün İzin", "Yarım Gün"],
+          ["Ücretsiz İzin", "Ücretsiz"],
+        ].map(([type, label]) => (
+          <div key={type} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
+            <div style={{ ...calendarChipStyle(type), fontSize: 10 }}>{label}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2099,12 +2262,16 @@ const calendarCellStyle = {
   overflow: "hidden",
 };
 
-function calendarChipStyle(status) {
+function calendarChipStyle(leaveType) {
   const colors = {
-    Onaylandı: { bg: "rgba(20,83,45,0.85)", color: "#bbf7d0" },
-    Bekliyor:  { bg: "rgba(92,46,8,0.85)",  color: "#fde68a" },
+    "Tam Gün İzin":   { bg: "rgba(29,78,216,0.82)",  color: "#bfdbfe" },
+    "Yarım Gün İzin": { bg: "rgba(6,148,162,0.82)",   color: "#a5f3fc" },
+    "Yıllık İzin":    { bg: "rgba(20,83,45,0.85)",    color: "#bbf7d0" },
+    "Mazeret İzni":   { bg: "rgba(109,40,217,0.82)",  color: "#ddd6fe" },
+    "Rapor":          { bg: "rgba(180,52,3,0.82)",    color: "#fed7aa" },
+    "Ücretsiz İzin":  { bg: "rgba(55,65,81,0.85)",    color: "#d1d5db" },
   };
-  const c = colors[status] || colors["Bekliyor"];
+  const c = colors[leaveType] || { bg: "rgba(92,46,8,0.85)", color: "#fde68a" };
   return {
     fontSize: 11,
     fontWeight: 600,
@@ -2117,6 +2284,22 @@ function calendarChipStyle(status) {
     textOverflow: "ellipsis",
   };
 }
+
+const empStatCardStyle = {
+  flex: 1,
+  minWidth: 100,
+  padding: "12px 16px",
+  borderRadius: 14,
+  background: "rgba(255,255,255,0.05)",
+  border: "1px solid rgba(255,255,255,0.08)",
+};
+
+const empLeaveRowStyle = {
+  padding: "12px 14px",
+  borderRadius: 12,
+  background: "rgba(255,255,255,0.04)",
+  border: "1px solid rgba(255,255,255,0.07)",
+};
 
 const leaveTypeBadgeStyle = {
   display: "inline-block",
