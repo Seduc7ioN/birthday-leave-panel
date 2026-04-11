@@ -74,11 +74,11 @@ export default function App() {
     // so getSession() is not needed and causes double loadAll() calls.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
+    } = supabase.auth.onAuthStateChange((_event, currentSession) => {
       setSession(currentSession || null);
       if (currentSession) {
         setShowLoginModal(false);
-        await loadAll();
+        loadAll(); // async değil — fire and forget
       } else {
         setEmployees([]);
         setLeaveRequests([]);
@@ -103,20 +103,7 @@ export default function App() {
         .order("start_date", { ascending: false }),
     ]);
 
-    // Token süresi dolmuşsa zorla çıkış yap
-    if (employeeError) {
-      console.error("Employees error:", employeeError.message);
-      const msg = employeeError.message || "";
-      if (msg.includes("JWT") || msg.includes("token") || employeeError.code === "PGRST301") {
-        await supabase.auth.signOut();
-        setSession(null);
-        setEmployees([]);
-        setLeaveRequests([]);
-        setLoading(false);
-        setShowLoginModal(true);
-        return;
-      }
-    }
+    if (employeeError) console.error("Employees error:", employeeError.message);
     if (leaveError) console.error("Leave requests error:", leaveError.message);
 
     setEmployees(employeeData || []);
