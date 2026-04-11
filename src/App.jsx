@@ -48,6 +48,9 @@ export default function App() {
   // Toast notifications
   const [toasts, setToasts] = useState([]);
 
+  // Takvim
+  const [calendarDate, setCalendarDate] = useState(new Date());
+
   const [authForm, setAuthForm] = useState({ email: "", password: "", full_name: "" });
   const [form, setForm] = useState(EMPTY_LEAVE_FORM);
 
@@ -290,6 +293,76 @@ export default function App() {
     addToast("İzin kaydı güncellendi.", "success");
     setEditingLeave(null);
     await loadAll();
+  }
+
+  // Doğum günü tarayıcı bildirimi (3 gün öncesinden)
+  useEffect(() => {
+    if (!session || employees.length === 0) return;
+    if (!("Notification" in window)) return;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const upcoming = employees.filter((emp) => {
+      if (!emp.birth_date) return false;
+      const b = new Date(emp.birth_date);
+      const next = new Date(today.getFullYear(), b.getMonth(), b.getDate());
+      if (next < today) next.setFullYear(today.getFullYear() + 1);
+      const d = Math.floor((next - today) / (1000 * 60 * 60 * 24));
+      return d >= 0 && d <= 3;
+    });
+
+    if (upcoming.length === 0) return;
+
+    function sendNotifs() {
+      upcoming.forEach((emp) => {
+        const b = new Date(emp.birth_date);
+        const next = new Date(today.getFullYear(), b.getMonth(), b.getDate());
+        if (next < today) next.setFullYear(today.getFullYear() + 1);
+        const d = Math.floor((next - today) / (1000 * 60 * 60 * 24));
+        new Notification("🎂 Doğum Günü Hatırlatma", {
+          body: d === 0
+            ? `Bugün ${emp.full_name}'in doğum günü! 🎉`
+            : `${emp.full_name}'in doğum günü ${d} gün sonra!`,
+          icon: "/favicon.svg",
+        });
+      });
+    }
+
+    if (Notification.permission === "granted") {
+      sendNotifs();
+    } else if (Notification.permission !== "denied") {
+      Notification.requestPermission().then((perm) => {
+        if (perm === "granted") sendNotifs();
+      });
+    }
+  }, [session, employees]);
+
+  // CSV İndir
+  function downloadCSV() {
+    const headers = ["Personel", "İzin Türü", "Başlangıç", "Bitiş", "Gün", "Durum", "Not"];
+    const rows = filteredLeaveRequests.map((item) => [
+      item.employees?.full_name || "",
+      item.leave_type,
+      item.start_date,
+      item.end_date,
+      String(calcDays(item.start_date, item.end_date)).replace("g", ""),
+      item.status,
+      item.note || "",
+    ]);
+
+    const csv = [headers, ...rows]
+      .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `izin-listesi-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addToast("CSV indirildi.", "success");
   }
 
   function scrollToRef(ref) {
@@ -543,6 +616,27 @@ export default function App() {
                 />
               </Section>
             </div>
+
+            {/* İzin Özeti */}
+            <Section title={`📊 İzin Özeti • ${new Date().getFullYear()} (Onaylananlar)`}>
+              <LeaveStats leaveRequests={leaveRequests} employees={employees} />
+            </Section>
+
+            {/* İzin Takvimi */}
+            <Section
+              title="📅 İzin Takvimi"
+              action={
+                <button onClick={downloadCSV} style={secondaryButtonStyle}>
+                  ⬇ CSV İndir
+                </button>
+              }
+            >
+              <LeaveCalendar
+                leaveRequests={leaveRequests}
+                calendarDate={calendarDate}
+                setCalendarDate={setCalendarDate}
+              />
+            </Section>
 
             {/* New Leave Form */}
             <Section title="📝 Yeni İzin Talebi">
@@ -1191,6 +1285,188 @@ function Section({ title, children, action }) {
   );
 }
 
+// ─── LeaveStats ─────────────────────────────────────────────
+
+function LeaveStats({ leaveRequests, employees }) {
+  const currentYear = new Date().getFullYear();
+
+  const stats = employees
+    .map((emp) => {
+      const empLeaves = leaveRequests.filter(
+        (lr) =>
+          lr.employee_id === emp.id &&
+          lr.status === "Onaylandı" &&
+          new Date(lr.start_date).getFullYear() === currentYear
+      );
+
+      const totalDays = empLeaves.reduce((sum, lr) => {
+        const d = Math.floor((new Date(lr.end_date) - new Date(lr.start_date)) / (1000 * 60 * 60 * 24)) + 1;
+        return sum + Math.max(d, 0);
+      }, 0);
+
+      const byType = {};
+      empLeaves.forEach((lr) => {
+        const d = Math.floor((new Date(lr.end_date) - new Date(lr.start_date)) / (1000 * 60 * 60 * 24)) + 1;
+        byType[lr.leave_type] = (byType[lr.leave_type] || 0) + Math.max(d, 0);
+      });
+
+      return { ...emp, totalDays, byType, leaveCount: empLeaves.length };
+    })
+    .filter((e) => e.totalDays > 0)
+    .sort((a, b) => b.totalDays - a.totalDays);
+
+  if (stats.length === 0) {
+    return <p style={{ opacity: 0.6, margin: 0 }}>Bu yıl onaylanmış izin kaydı yok.</p>;
+  }
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={tableStyle}>
+        <thead>
+          <tr>
+            <th style={thStyle}>Personel</th>
+            <th style={thStyle}>Toplam Gün</th>
+            <th style={thStyle}>İzin Sayısı</th>
+            <th style={thStyle}>Türe Göre Dağılım</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stats.map((emp) => (
+            <tr key={emp.id} className="table-row">
+              <td style={tdStyle}>{emp.full_name}</td>
+              <td style={{ ...tdStyle, fontWeight: 800, color: "#93c5fd", fontSize: 16 }}>
+                {emp.totalDays}g
+              </td>
+              <td style={tdStyle}>{emp.leaveCount}</td>
+              <td style={tdStyle}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {Object.entries(emp.byType).map(([type, days]) => (
+                    <span key={type} style={leaveTypeBadgeStyle}>
+                      {type}: {days}g
+                    </span>
+                  ))}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─── LeaveCalendar ───────────────────────────────────────────
+
+function LeaveCalendar({ leaveRequests, calendarDate, setCalendarDate }) {
+  const year = calendarDate.getFullYear();
+  const month = calendarDate.getMonth();
+
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  let startDow = firstDay.getDay() - 1;
+  if (startDow < 0) startDow = 6;
+
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  function getLeavesForDay(day) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return leaveRequests.filter(
+      (lr) =>
+        lr.status !== "Reddedildi" &&
+        lr.start_date <= dateStr &&
+        lr.end_date >= dateStr
+    );
+  }
+
+  function prevMonth() { setCalendarDate(new Date(year, month - 1, 1)); }
+  function nextMonth() { setCalendarDate(new Date(year, month + 1, 1)); }
+  function goToday()   { setCalendarDate(new Date()); }
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={prevMonth} style={smallButtonStyle}>‹</button>
+        <span style={{ fontWeight: 800, fontSize: 16, minWidth: 160, textAlign: "center" }}>
+          {calendarDate.toLocaleDateString("tr-TR", { month: "long", year: "numeric" })}
+        </span>
+        <button onClick={nextMonth} style={smallButtonStyle}>›</button>
+        <button onClick={goToday} style={secondaryButtonStyle}>Bugün</button>
+      </div>
+
+      <div style={calendarGridStyle}>
+        {["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"].map((d) => (
+          <div key={d} style={calendarHeaderCellStyle}>{d}</div>
+        ))}
+
+        {cells.map((day, i) => {
+          if (!day) return <div key={`e-${i}`} style={{ minHeight: 72 }} />;
+
+          const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const leaves = getLeavesForDay(day);
+          const isToday = dateStr === todayStr;
+          const isWeekend = ((startDow + day - 1) % 7) >= 5;
+
+          return (
+            <div
+              key={day}
+              style={{
+                ...calendarCellStyle,
+                background: isToday
+                  ? "rgba(37,99,235,0.22)"
+                  : isWeekend
+                  ? "rgba(255,255,255,0.015)"
+                  : "rgba(255,255,255,0.04)",
+                border: isToday
+                  ? "1px solid rgba(96,165,250,0.55)"
+                  : "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: isToday ? 900 : 500,
+                  color: isToday ? "#93c5fd" : isWeekend ? "rgba(255,255,255,0.45)" : "white",
+                  marginBottom: 4,
+                }}
+              >
+                {day}
+              </div>
+
+              {leaves.slice(0, 3).map((lr) => (
+                <div key={lr.id} style={calendarChipStyle(lr.status)}>
+                  {(lr.employees?.full_name || "?").split(" ")[0]}
+                </div>
+              ))}
+              {leaves.length > 3 && (
+                <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2 }}>
+                  +{leaves.length - 3}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 14, marginTop: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+          <div style={{ ...calendarChipStyle("Onaylandı"), position: "static", fontSize: 11 }}>Onay</div>
+          <span style={{ opacity: 0.7 }}>Onaylandı</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+          <div style={{ ...calendarChipStyle("Bekliyor"), position: "static", fontSize: 11 }}>Bekl.</div>
+          <span style={{ opacity: 0.7 }}>Bekliyor</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Helpers ────────────────────────────────────────────────
 
 function calcDays(start, end) {
@@ -1796,6 +2072,62 @@ function getRoleBadgeStyle() {
     border: "1px solid rgba(248,113,113,0.24)",
   };
 }
+
+const calendarGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(7, 1fr)",
+  gap: 4,
+};
+
+const calendarHeaderCellStyle = {
+  textAlign: "center",
+  fontSize: 11,
+  fontWeight: 700,
+  letterSpacing: 0.6,
+  textTransform: "uppercase",
+  color: "rgba(255,255,255,0.45)",
+  padding: "6px 0",
+};
+
+const calendarCellStyle = {
+  borderRadius: 10,
+  padding: "6px 7px",
+  minHeight: 72,
+  display: "flex",
+  flexDirection: "column",
+  gap: 3,
+  overflow: "hidden",
+};
+
+function calendarChipStyle(status) {
+  const colors = {
+    Onaylandı: { bg: "rgba(20,83,45,0.85)", color: "#bbf7d0" },
+    Bekliyor:  { bg: "rgba(92,46,8,0.85)",  color: "#fde68a" },
+  };
+  const c = colors[status] || colors["Bekliyor"];
+  return {
+    fontSize: 11,
+    fontWeight: 600,
+    padding: "2px 5px",
+    borderRadius: 5,
+    background: c.bg,
+    color: c.color,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  };
+}
+
+const leaveTypeBadgeStyle = {
+  display: "inline-block",
+  padding: "4px 9px",
+  borderRadius: 999,
+  fontSize: 11,
+  fontWeight: 600,
+  background: "rgba(55,65,81,0.7)",
+  color: "rgba(255,255,255,0.85)",
+  border: "1px solid rgba(255,255,255,0.08)",
+};
 
 function getStatusBadgeStyle(status) {
   const base = {
