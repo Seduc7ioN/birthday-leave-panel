@@ -4,7 +4,13 @@ import bg from "./assets/bg.png.png";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
+  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  }
 );
 
 const BDAY_TABS = [
@@ -43,76 +49,61 @@ export default function App() {
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const birthdaySectionRef = useRef(null);
   const leaveSectionRef = useRef(null);
+  const loginSectionRef = useRef(null);
 
   useEffect(() => {
     injectGlobalStyles();
 
+    let mounted = true;
+
     supabase.auth.getSession().then(async ({ data }) => {
+      if (!mounted) return;
       const currentSession = data.session || null;
       setSession(currentSession);
 
       if (currentSession) {
-        await ensureProfile(currentSession.user);
         await loadAll(currentSession.user.id);
       } else {
+        setProfile(null);
+        setEmployees([]);
+        setLeaveRequests([]);
         setLoading(false);
       }
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      async (_event, currentSession) => {
-        setSession(currentSession || null);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
+      if (!mounted) return;
 
-        if (currentSession) {
-          await ensureProfile(currentSession.user);
-          await loadAll(currentSession.user.id);
-        } else {
-          setProfile(null);
-          setEmployees([]);
-          setLeaveRequests([]);
-          setLoading(false);
-        }
+      setSession(currentSession || null);
+
+      if (currentSession) {
+        await loadAll(currentSession.user.id);
+      } else {
+        setProfile(null);
+        setEmployees([]);
+        setLeaveRequests([]);
+        setLoading(false);
       }
-    );
+    });
 
     return () => {
-      listener.subscription.unsubscribe();
+      mounted = false;
+      subscription.unsubscribe();
     };
   }, []);
-
-  async function ensureProfile(user) {
-    const { data: existing } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (!existing) {
-      await supabase.from("profiles").insert({
-        id: user.id,
-        email: user.email,
-        full_name: user.user_metadata?.full_name || user.email,
-        role: "viewer",
-      });
-    }
-
-    const { data: fresh } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    setProfile(fresh || null);
-  }
 
   async function loadAll(userId) {
     setLoading(true);
 
-    const [{ data: p }, { data: e }, { data: l }] = await Promise.all([
-      supabase.from("profiles").select("*").eq("id", userId).single(),
+    const [{ data: p, error: pErr }, { data: e }, { data: l }] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
       supabase.from("employees").select("*").order("full_name", { ascending: true }),
       supabase
         .from("leave_requests")
@@ -120,10 +111,23 @@ export default function App() {
         .order("start_date", { ascending: false }),
     ]);
 
+    if (pErr) {
+      console.error("Profile error:", pErr.message);
+    }
+
     setProfile(p || null);
     setEmployees(e || []);
     setLeaveRequests(l || []);
     setLoading(false);
+  }
+
+  async function signIn() {
+    const { email, password } = authForm;
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      alert(error.message);
+    }
   }
 
   async function signUp() {
@@ -145,17 +149,22 @@ export default function App() {
     alert("Kayıt tamam. Mail doğrulama açıksa mailini kontrol et.");
   }
 
-  async function signIn() {
-    const { email, password } = authForm;
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-
+  async function signOut() {
+    const { error } = await supabase.auth.signOut();
     if (error) {
       alert(error.message);
+      return;
     }
-  }
 
-  async function signOut() {
-    await supabase.auth.signOut();
+    setSession(null);
+    setProfile(null);
+    setEmployees([]);
+    setLeaveRequests([]);
+    setLoading(false);
+
+    setTimeout(() => {
+      loginSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
   }
 
   function handleAuthChange(e) {
@@ -171,6 +180,11 @@ export default function App() {
   async function handleSubmit(e) {
     e.preventDefault();
     setSaveMessage("");
+
+    if (!session) {
+      setSaveMessage("Önce giriş yapmalısın.");
+      return;
+    }
 
     if (!form.employee_id || !form.start_date || !form.end_date) {
       setSaveMessage("Personel, başlangıç ve bitiş tarihi zorunlu.");
@@ -201,15 +215,14 @@ export default function App() {
       status: "Bekliyor",
     });
 
-    if (session?.user?.id) {
-      await loadAll(session.user.id);
-    }
-
+    await loadAll(session.user.id);
     setStatusFilter("");
     scrollToRef(leaveSectionRef);
   }
 
   async function updateStatus(id, newStatus) {
+    if (!session) return;
+
     const { error } = await supabase
       .from("leave_requests")
       .update({ status: newStatus })
@@ -220,12 +233,11 @@ export default function App() {
       return;
     }
 
-    if (session?.user?.id) {
-      await loadAll(session.user.id);
-    }
+    await loadAll(session.user.id);
   }
 
   async function deleteLeave(id) {
+    if (!session) return;
     if (!window.confirm("Bu kayıt silinsin mi?")) return;
 
     const { error } = await supabase
@@ -238,9 +250,7 @@ export default function App() {
       return;
     }
 
-    if (session?.user?.id) {
-      await loadAll(session.user.id);
-    }
+    await loadAll(session.user.id);
   }
 
   function scrollToRef(ref) {
@@ -269,7 +279,6 @@ export default function App() {
 
   const todayOnLeaveCount = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10);
-
     return leaveRequests.filter(
       (x) =>
         x.status !== "Reddedildi" &&
@@ -292,10 +301,12 @@ export default function App() {
 
       const matchesStatus = !statusFilter || item.status === statusFilter;
       const matchesType = !typeFilter || item.leave_type === typeFilter;
+      const matchesFrom = !dateFrom || item.start_date >= dateFrom;
+      const matchesTo = !dateTo || item.end_date <= dateTo;
 
-      return matchesSearch && matchesStatus && matchesType;
+      return matchesSearch && matchesStatus && matchesType && matchesFrom && matchesTo;
     });
-  }, [leaveRequests, searchText, statusFilter, typeFilter]);
+  }, [leaveRequests, searchText, statusFilter, typeFilter, dateFrom, dateTo]);
 
   const activeBirthdayItems = birthdayStats[birthdayTab] || [];
   const activeBirthdayLabel =
@@ -304,15 +315,59 @@ export default function App() {
   const canManage = profile?.role === "admin" || profile?.role === "manager";
   const canDelete = profile?.role === "admin";
 
-  if (!session) {
-    return (
-      <div style={pageStyle}>
-        <div style={overlayStyle} />
-        <div style={contentWrapStyle}>
-          <div style={{ maxWidth: 500, margin: "40px auto", ...sectionStyle }}>
-            <div style={{ marginBottom: 18 }}>
+  return (
+    <div style={pageStyle}>
+      <div style={overlayStyle} />
+
+      <div style={contentWrapStyle}>
+        <header style={headerStyle}>
+          <div style={headerLeftStyle}>
+            <div style={logoBoxStyle}>
+              <span style={{ fontSize: 28 }}>🎉</span>
+            </div>
+
+            <div>
               <div style={headerTopLineStyle}>Personel Yönetim Paneli</div>
-              <h1 style={{ margin: 0, fontSize: 34 }}>Giriş / Kayıt</h1>
+              <h1 style={headerTitleStyle}>Doğum Günü + İzin Takip Sistemi</h1>
+              <div style={headerMetaRowStyle}>
+                <span style={metaBadgeStyle}>
+                  👤 {session ? (profile?.full_name || profile?.email || "Kullanıcı") : "Misafir"}
+                </span>
+                <span style={getRoleBadgeStyle(profile?.role)}>
+                  {profile?.role ? profile.role.toUpperCase() : "ROL YOK"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div style={headerRightStyle}>
+            <div style={headerInfoCardStyle}>
+              <div style={headerInfoLabelStyle}>Bugün</div>
+              <div style={headerInfoValueStyle}>
+                {new Date().toLocaleDateString("tr-TR")}
+              </div>
+            </div>
+
+            {!session ? (
+              <button
+                onClick={() => scrollToRef(loginSectionRef)}
+                style={logoutButtonStyle}
+              >
+                Giriş
+              </button>
+            ) : (
+              <button onClick={signOut} style={logoutButtonStyle}>
+                Çıkış
+              </button>
+            )}
+          </div>
+        </header>
+
+        {!session && (
+          <div ref={loginSectionRef} style={{ maxWidth: 500, margin: "0 auto 24px auto", ...sectionStyle }}>
+            <div style={{ marginBottom: 18 }}>
+              <div style={headerTopLineStyle}>Oturum Aç</div>
+              <h2 style={{ margin: 0 }}>Giriş / Kayıt</h2>
             </div>
 
             <div style={{ display: "grid", gap: 12 }}>
@@ -346,348 +401,343 @@ export default function App() {
               </button>
             </div>
           </div>
-        </div>
-      </div>
-    );
-  }
+        )}
 
-  return (
-    <div style={pageStyle}>
-      <div style={overlayStyle} />
-
-      <div style={contentWrapStyle}>
-        <header style={headerStyle}>
-          <div style={headerLeftStyle}>
-            <div style={logoBoxStyle}>
-              <span style={{ fontSize: 28 }}>🎉</span>
-            </div>
-
-            <div>
-              <div style={headerTopLineStyle}>Personel Yönetim Paneli</div>
-              <h1 style={headerTitleStyle}>Doğum Günü + İzin Takip Sistemi</h1>
-              <div style={headerMetaRowStyle}>
-                <span style={metaBadgeStyle}>
-                  👤 {profile?.full_name || profile?.email || "Kullanıcı"}
-                </span>
-                <span style={getRoleBadgeStyle(profile?.role)}>
-                  {profile?.role ? profile.role.toUpperCase() : "ROL YOK"}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div style={headerRightStyle}>
-            <div style={headerInfoCardStyle}>
-              <div style={headerInfoLabelStyle}>Bugün</div>
-              <div style={headerInfoValueStyle}>
-                {new Date().toLocaleDateString("tr-TR")}
-              </div>
-            </div>
-
-            <button onClick={signOut} style={logoutButtonStyle}>
-              Çıkış
-            </button>
-          </div>
-        </header>
-
-        <div style={kpiGridStyle}>
-          <Card title="👥 Personel" value={employees.length} />
-          <Card
-            title="🎂 Bugün"
-            value={birthdayStats.today.length}
-            onClick={() => openBirthdayTab("today")}
-          />
-          <Card
-            title="📆 Bu Hafta"
-            value={birthdayStats.thisWeek.length}
-            onClick={() => openBirthdayTab("thisWeek")}
-          />
-          <Card
-            title="⏭️ Gelecek Hafta"
-            value={birthdayStats.nextWeek.length}
-            onClick={() => openBirthdayTab("nextWeek")}
-          />
-          <Card
-            title="📝 Bekleyen İzin"
-            value={pendingCount}
-            onClick={() => openLeaveSectionWithFilter("Bekliyor", "")}
-          />
-          <Card
-            title="🏖️ Bugün İzinli"
-            value={todayOnLeaveCount}
-            onClick={() => openLeaveSectionWithFilter("", "")}
-          />
-        </div>
-
-        <div ref={birthdaySectionRef}>
-          <Section title={`🎂 Doğum Günü Takibi • ${activeBirthdayLabel} (${activeBirthdayItems.length})`}>
-            <div style={tabsWrapStyle}>
-              {BDAY_TABS.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setBirthdayTab(tab.key)}
-                  style={{
-                    ...tabButtonStyle,
-                    ...(birthdayTab === tab.key ? activeTabButtonStyle : {}),
-                  }}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            <BirthdayList
-              items={activeBirthdayItems}
-              emptyText={`${activeBirthdayLabel} için kayıt yok`}
-              showUpcoming={birthdayTab === "upcoming"}
-            />
-          </Section>
-        </div>
-
-        <Section title="📝 Yeni İzin Talebi">
-          <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
-            <select
-              name="employee_id"
-              value={form.employee_id}
-              onChange={handleChange}
-              style={inputStyle}
-            >
-              <option value="">Personel seç</option>
-              {employees.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.full_name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              name="leave_type"
-              value={form.leave_type}
-              onChange={handleChange}
-              style={inputStyle}
-            >
-              <option>Tam Gün İzin</option>
-              <option>Yarım Gün İzin</option>
-              <option>Yıllık İzin</option>
-              <option>Mazeret İzni</option>
-              <option>Rapor</option>
-              <option>Ücretsiz İzin</option>
-            </select>
-
-            <div style={dateGridStyle}>
-              <input
-                type="date"
-                name="start_date"
-                value={form.start_date}
-                onChange={handleChange}
-                style={inputStyle}
+        {session && profile?.role && (
+          <>
+            <div style={kpiGridStyle}>
+              <Card title="👥 Personel" value={employees.length} />
+              <Card
+                title="🎂 Bugün"
+                value={birthdayStats.today.length}
+                onClick={() => openBirthdayTab("today")}
               />
-              <input
-                type="date"
-                name="end_date"
-                value={form.end_date}
-                onChange={handleChange}
-                style={inputStyle}
+              <Card
+                title="📆 Bu Hafta"
+                value={birthdayStats.thisWeek.length}
+                onClick={() => openBirthdayTab("thisWeek")}
+              />
+              <Card
+                title="⏭️ Gelecek Hafta"
+                value={birthdayStats.nextWeek.length}
+                onClick={() => openBirthdayTab("nextWeek")}
+              />
+              <Card
+                title="📝 Bekleyen İzin"
+                value={pendingCount}
+                onClick={() => openLeaveSectionWithFilter("Bekliyor", "")}
+              />
+              <Card
+                title="🏖️ Bugün İzinli"
+                value={todayOnLeaveCount}
+                onClick={() => openLeaveSectionWithFilter("", "")}
               />
             </div>
 
-            <select
-              name="status"
-              value={form.status}
-              onChange={handleChange}
-              style={inputStyle}
-            >
-              <option>Bekliyor</option>
-              <option>Onaylandı</option>
-              <option>Reddedildi</option>
-            </select>
-
-            <textarea
-              name="note"
-              placeholder="Not / açıklama"
-              value={form.note}
-              onChange={handleChange}
-              rows={3}
-              style={{ ...inputStyle, resize: "vertical" }}
-            />
-
-            <button type="submit" style={buttonStyle}>
-              İzin Kaydet
-            </button>
-
-            {saveMessage && <p style={{ margin: 0 }}>{saveMessage}</p>}
-          </form>
-        </Section>
-
-        <div ref={leaveSectionRef}>
-          <Section title={`📋 İzin Kayıt Tablosu (${filteredLeaveRequests.length})`}>
-            <div style={filterBarStyle}>
-              <input
-                placeholder="İsim, not veya izin türü ara..."
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                style={inputStyle}
-              />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">Tüm Durumlar</option>
-                <option value="Bekliyor">Bekliyor</option>
-                <option value="Onaylandı">Onaylandı</option>
-                <option value="Reddedildi">Reddedildi</option>
-              </select>
-              <select
-                value={typeFilter}
-                onChange={(e) => setTypeFilter(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="">Tüm Türler</option>
-                <option value="Tam Gün İzin">Tam Gün İzin</option>
-                <option value="Yarım Gün İzin">Yarım Gün İzin</option>
-                <option value="Yıllık İzin">Yıllık İzin</option>
-                <option value="Mazeret İzni">Mazeret İzni</option>
-                <option value="Rapor">Rapor</option>
-                <option value="Ücretsiz İzin">Ücretsiz İzin</option>
-              </select>
-            </div>
-
-            {loading ? (
-              <p>Yükleniyor...</p>
-            ) : filteredLeaveRequests.length === 0 ? (
-              <p>Kayıt bulunamadı</p>
-            ) : (
-              <>
-                <div className="desktop-table" style={{ overflowX: "auto" }}>
-                  <table style={tableStyle}>
-                    <thead>
-                      <tr>
-                        <th style={thStyle}>Personel</th>
-                        <th style={thStyle}>Tür</th>
-                        <th style={thStyle}>Başlangıç</th>
-                        <th style={thStyle}>Bitiş</th>
-                        <th style={thStyle}>Durum</th>
-                        <th style={thStyle}>Not</th>
-                        <th style={thStyle}>İşlem</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredLeaveRequests.map((item) => (
-                        <tr key={item.id}>
-                          <td style={tdStyle}>{item.employees?.full_name || "-"}</td>
-                          <td style={tdStyle}>{item.leave_type}</td>
-                          <td style={tdStyle}>{formatDateTR(item.start_date)}</td>
-                          <td style={tdStyle}>{formatDateTR(item.end_date)}</td>
-                          <td style={tdStyle}>
-                            <span style={getStatusBadgeStyle(item.status)}>
-                              {item.status}
-                            </span>
-                          </td>
-                          <td style={tdStyle}>{item.note || "-"}</td>
-                          <td style={tdStyle}>
-                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              {canManage && (
-                                <>
-                                  <button
-                                    onClick={() => updateStatus(item.id, "Onaylandı")}
-                                    style={smallButtonStyle}
-                                  >
-                                    Onayla
-                                  </button>
-                                  <button
-                                    onClick={() => updateStatus(item.id, "Reddedildi")}
-                                    style={smallButtonStyle}
-                                  >
-                                    Reddet
-                                  </button>
-                                  <button
-                                    onClick={() => updateStatus(item.id, "Bekliyor")}
-                                    style={smallButtonStyle}
-                                  >
-                                    Bekliyor
-                                  </button>
-                                </>
-                              )}
-
-                              {canDelete && (
-                                <button
-                                  onClick={() => deleteLeave(item.id)}
-                                  style={{ ...smallButtonStyle, background: "#7f1d1d" }}
-                                >
-                                  Sil
-                                </button>
-                              )}
-
-                              {!canManage && !canDelete && <span>-</span>}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="mobile-cards">
-                  {filteredLeaveRequests.map((item) => (
-                    <div key={item.id} style={mobileLeaveCardStyle}>
-                      <div style={{ fontWeight: "bold", marginBottom: 8 }}>
-                        {item.employees?.full_name || "-"}
-                      </div>
-                      <div style={mobileRowStyle}>
-                        <span style={mobileLabelStyle}>Tür</span>
-                        <span>{item.leave_type}</span>
-                      </div>
-                      <div style={mobileRowStyle}>
-                        <span style={mobileLabelStyle}>Başlangıç</span>
-                        <span>{formatDateTR(item.start_date)}</span>
-                      </div>
-                      <div style={mobileRowStyle}>
-                        <span style={mobileLabelStyle}>Bitiş</span>
-                        <span>{formatDateTR(item.end_date)}</span>
-                      </div>
-                      <div style={mobileRowStyle}>
-                        <span style={mobileLabelStyle}>Durum</span>
-                        <span style={getStatusBadgeStyle(item.status)}>{item.status}</span>
-                      </div>
-                      <div style={mobileRowStyle}>
-                        <span style={mobileLabelStyle}>Not</span>
-                        <span>{item.note || "-"}</span>
-                      </div>
-
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
-                        {canManage && (
-                          <>
-                            <button
-                              onClick={() => updateStatus(item.id, "Onaylandı")}
-                              style={smallButtonStyle}
-                            >
-                              Onayla
-                            </button>
-                            <button
-                              onClick={() => updateStatus(item.id, "Reddedildi")}
-                              style={smallButtonStyle}
-                            >
-                              Reddet
-                            </button>
-                          </>
-                        )}
-                        {canDelete && (
-                          <button
-                            onClick={() => deleteLeave(item.id)}
-                            style={{ ...smallButtonStyle, background: "#7f1d1d" }}
-                          >
-                            Sil
-                          </button>
-                        )}
-                      </div>
-                    </div>
+            <div ref={birthdaySectionRef}>
+              <Section title={`🎂 Doğum Günü Takibi • ${activeBirthdayLabel} (${activeBirthdayItems.length})`}>
+                <div style={tabsWrapStyle}>
+                  {BDAY_TABS.map((tab) => (
+                    <button
+                      key={tab.key}
+                      onClick={() => setBirthdayTab(tab.key)}
+                      style={{
+                        ...tabButtonStyle,
+                        ...(birthdayTab === tab.key ? activeTabButtonStyle : {}),
+                      }}
+                    >
+                      {tab.label}
+                    </button>
                   ))}
                 </div>
-              </>
-            )}
+
+                <BirthdayList
+                  items={activeBirthdayItems}
+                  emptyText={`${activeBirthdayLabel} için kayıt yok`}
+                  showUpcoming={birthdayTab === "upcoming"}
+                />
+              </Section>
+            </div>
+
+            <Section title="📝 Yeni İzin Talebi">
+              <form onSubmit={handleSubmit} style={{ display: "grid", gap: 12 }}>
+                <select
+                  name="employee_id"
+                  value={form.employee_id}
+                  onChange={handleChange}
+                  style={inputStyle}
+                >
+                  <option value="">Personel seç</option>
+                  {employees.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.full_name}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  name="leave_type"
+                  value={form.leave_type}
+                  onChange={handleChange}
+                  style={inputStyle}
+                >
+                  <option>Tam Gün İzin</option>
+                  <option>Yarım Gün İzin</option>
+                  <option>Yıllık İzin</option>
+                  <option>Mazeret İzni</option>
+                  <option>Rapor</option>
+                  <option>Ücretsiz İzin</option>
+                </select>
+
+                <div style={dateGridStyle}>
+                  <input
+                    type="date"
+                    name="start_date"
+                    value={form.start_date}
+                    onChange={handleChange}
+                    style={inputStyle}
+                  />
+                  <input
+                    type="date"
+                    name="end_date"
+                    value={form.end_date}
+                    onChange={handleChange}
+                    style={inputStyle}
+                  />
+                </div>
+
+                <select
+                  name="status"
+                  value={form.status}
+                  onChange={handleChange}
+                  style={inputStyle}
+                >
+                  <option>Bekliyor</option>
+                  <option>Onaylandı</option>
+                  <option>Reddedildi</option>
+                </select>
+
+                <textarea
+                  name="note"
+                  placeholder="Not / açıklama"
+                  value={form.note}
+                  onChange={handleChange}
+                  rows={3}
+                  style={{ ...inputStyle, resize: "vertical" }}
+                />
+
+                <button type="submit" style={buttonStyle}>
+                  İzin Kaydet
+                </button>
+
+                {saveMessage && <p style={{ margin: 0 }}>{saveMessage}</p>}
+              </form>
+            </Section>
+
+            <div ref={leaveSectionRef}>
+              <Section title={`📋 İzin Kayıt Tablosu (${filteredLeaveRequests.length})`}>
+                <div style={filterBarStyle}>
+                  <input
+                    placeholder="İsim, not veya izin türü ara..."
+                    value={searchText}
+                    onChange={(e) => setSearchText(e.target.value)}
+                    style={inputStyle}
+                  />
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">Tüm Durumlar</option>
+                    <option value="Bekliyor">Bekliyor</option>
+                    <option value="Onaylandı">Onaylandı</option>
+                    <option value="Reddedildi">Reddedildi</option>
+                  </select>
+                  <select
+                    value={typeFilter}
+                    onChange={(e) => setTypeFilter(e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">Tüm Türler</option>
+                    <option value="Tam Gün İzin">Tam Gün İzin</option>
+                    <option value="Yarım Gün İzin">Yarım Gün İzin</option>
+                    <option value="Yıllık İzin">Yıllık İzin</option>
+                    <option value="Mazeret İzni">Mazeret İzni</option>
+                    <option value="Rapor">Rapor</option>
+                    <option value="Ücretsiz İzin">Ücretsiz İzin</option>
+                  </select>
+                </div>
+
+                <div style={filterBarStyle}>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    style={inputStyle}
+                  />
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    style={inputStyle}
+                  />
+                  <button
+                    onClick={() => {
+                      setSearchText("");
+                      setStatusFilter("");
+                      setTypeFilter("");
+                      setDateFrom("");
+                      setDateTo("");
+                    }}
+                    style={secondaryButtonStyle}
+                  >
+                    Filtreleri Temizle
+                  </button>
+                </div>
+
+                {loading ? (
+                  <p>Yükleniyor...</p>
+                ) : filteredLeaveRequests.length === 0 ? (
+                  <p>Kayıt bulunamadı</p>
+                ) : (
+                  <>
+                    <div className="desktop-table" style={{ overflowX: "auto" }}>
+                      <table style={tableStyle}>
+                        <thead>
+                          <tr>
+                            <th style={thStyle}>Personel</th>
+                            <th style={thStyle}>Tür</th>
+                            <th style={thStyle}>Başlangıç</th>
+                            <th style={thStyle}>Bitiş</th>
+                            <th style={thStyle}>Durum</th>
+                            <th style={thStyle}>Not</th>
+                            <th style={thStyle}>İşlem</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredLeaveRequests.map((item) => (
+                            <tr key={item.id}>
+                              <td style={tdStyle}>{item.employees?.full_name || "-"}</td>
+                              <td style={tdStyle}>{item.leave_type}</td>
+                              <td style={tdStyle}>{formatDateTR(item.start_date)}</td>
+                              <td style={tdStyle}>{formatDateTR(item.end_date)}</td>
+                              <td style={tdStyle}>
+                                <span style={getStatusBadgeStyle(item.status)}>
+                                  {item.status}
+                                </span>
+                              </td>
+                              <td style={tdStyle}>{item.note || "-"}</td>
+                              <td style={tdStyle}>
+                                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                  {canManage && (
+                                    <>
+                                      <button
+                                        onClick={() => updateStatus(item.id, "Onaylandı")}
+                                        style={smallButtonStyle}
+                                      >
+                                        Onayla
+                                      </button>
+                                      <button
+                                        onClick={() => updateStatus(item.id, "Reddedildi")}
+                                        style={smallButtonStyle}
+                                      >
+                                        Reddet
+                                      </button>
+                                      <button
+                                        onClick={() => updateStatus(item.id, "Bekliyor")}
+                                        style={smallButtonStyle}
+                                      >
+                                        Bekliyor
+                                      </button>
+                                    </>
+                                  )}
+
+                                  {canDelete && (
+                                    <button
+                                      onClick={() => deleteLeave(item.id)}
+                                      style={{ ...smallButtonStyle, background: "#7f1d1d" }}
+                                    >
+                                      Sil
+                                    </button>
+                                  )}
+
+                                  {!canManage && !canDelete && <span>-</span>}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="mobile-cards">
+                      {filteredLeaveRequests.map((item) => (
+                        <div key={item.id} style={mobileLeaveCardStyle}>
+                          <div style={{ fontWeight: "bold", marginBottom: 8 }}>
+                            {item.employees?.full_name || "-"}
+                          </div>
+                          <div style={mobileRowStyle}>
+                            <span style={mobileLabelStyle}>Tür</span>
+                            <span>{item.leave_type}</span>
+                          </div>
+                          <div style={mobileRowStyle}>
+                            <span style={mobileLabelStyle}>Başlangıç</span>
+                            <span>{formatDateTR(item.start_date)}</span>
+                          </div>
+                          <div style={mobileRowStyle}>
+                            <span style={mobileLabelStyle}>Bitiş</span>
+                            <span>{formatDateTR(item.end_date)}</span>
+                          </div>
+                          <div style={mobileRowStyle}>
+                            <span style={mobileLabelStyle}>Durum</span>
+                            <span style={getStatusBadgeStyle(item.status)}>{item.status}</span>
+                          </div>
+                          <div style={mobileRowStyle}>
+                            <span style={mobileLabelStyle}>Not</span>
+                            <span>{item.note || "-"}</span>
+                          </div>
+
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                            {canManage && (
+                              <>
+                                <button
+                                  onClick={() => updateStatus(item.id, "Onaylandı")}
+                                  style={smallButtonStyle}
+                                >
+                                  Onayla
+                                </button>
+                                <button
+                                  onClick={() => updateStatus(item.id, "Reddedildi")}
+                                  style={smallButtonStyle}
+                                >
+                                  Reddet
+                                </button>
+                              </>
+                            )}
+                            {canDelete && (
+                              <button
+                                onClick={() => deleteLeave(item.id)}
+                                style={{ ...smallButtonStyle, background: "#7f1d1d" }}
+                              >
+                                Sil
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </Section>
+            </div>
+          </>
+        )}
+
+        {session && !profile?.role && (
+          <Section title="⚠️ Erişim Uyarısı">
+            <p>Bu kullanıcı için rol bulunamadı. Profiles tablosunda rol ataması yapılmalı.</p>
           </Section>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -707,12 +757,15 @@ function BirthdayList({ items, emptyText, showUpcoming = false }) {
 
       <button
         onClick={() => openBirthdayWhatsApp(item)}
+        disabled={!item.phone}
         style={{
           ...smallButtonStyle,
-          background: "#16a34a",
+          background: item.phone ? "#16a34a" : "#4b5563",
+          cursor: item.phone ? "pointer" : "not-allowed",
+          opacity: item.phone ? 1 : 0.7,
         }}
       >
-        WhatsApp Mesajı
+        {item.phone ? "WhatsApp Mesajı" : "Numara Yok"}
       </button>
     </div>
   ));
@@ -788,12 +841,8 @@ function calculateBirthdayStats(employees) {
   result.today.sort((a, b) => a.daysLeft - b.daysLeft);
   result.thisWeek.sort((a, b) => a.daysLeft - b.daysLeft);
   result.nextWeek.sort((a, b) => a.daysLeft - b.daysLeft);
-  result.thisMonth.sort(
-    (a, b) => new Date(a.birth_date).getDate() - new Date(b.birth_date).getDate()
-  );
-  result.nextMonth.sort(
-    (a, b) => new Date(a.birth_date).getDate() - new Date(b.birth_date).getDate()
-  );
+  result.thisMonth.sort((a, b) => new Date(a.birth_date).getDate() - new Date(b.birth_date).getDate());
+  result.nextMonth.sort((a, b) => new Date(a.birth_date).getDate() - new Date(b.birth_date).getDate());
   result.upcoming.sort((a, b) => a.daysLeft - b.daysLeft);
 
   return result;
@@ -818,13 +867,8 @@ function openBirthdayWhatsApp(person) {
     return;
   }
 
-  if (phone.startsWith("0")) {
-    phone = phone.slice(1);
-  }
-
-  if (!phone.startsWith("90")) {
-    phone = `90${phone}`;
-  }
+  if (phone.startsWith("0")) phone = phone.slice(1);
+  if (!phone.startsWith("90")) phone = `90${phone}`;
 
   const text = `İyi ki doğdun ${person.full_name}! Sağlık, mutluluk ve başarı dolu nice güzel yaşların olsun 🎉🎂`;
   const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
@@ -840,14 +884,8 @@ function getStatusBadgeStyle(status) {
     fontWeight: "bold",
   };
 
-  if (status === "Onaylandı") {
-    return { ...base, background: "#14532d", color: "#bbf7d0" };
-  }
-
-  if (status === "Reddedildi") {
-    return { ...base, background: "#7f1d1d", color: "#fecaca" };
-  }
-
+  if (status === "Onaylandı") return { ...base, background: "#14532d", color: "#bbf7d0" };
+  if (status === "Reddedildi") return { ...base, background: "#7f1d1d", color: "#fecaca" };
   return { ...base, background: "#78350f", color: "#fde68a" };
 }
 
@@ -871,7 +909,6 @@ function getRoleBadgeStyle(role) {
       border: "1px solid rgba(248,113,113,0.28)",
     };
   }
-
   if (role === "manager") {
     return {
       ...base,
@@ -880,7 +917,6 @@ function getRoleBadgeStyle(role) {
       border: "1px solid rgba(96,165,250,0.28)",
     };
   }
-
   return {
     ...base,
     background: "rgba(245,158,11,0.18)",
@@ -954,15 +990,7 @@ const pageStyle = {
 const overlayStyle = {
   position: "absolute",
   inset: 0,
-  background: `
-    linear-gradient(
-      135deg,
-      rgba(3, 7, 18, 0.82) 0%,
-      rgba(10, 15, 28, 0.74) 35%,
-      rgba(17, 24, 39, 0.70) 65%,
-      rgba(2, 6, 23, 0.82) 100%
-    )
-  `,
+  background: `linear-gradient(135deg, rgba(3,7,18,0.82) 0%, rgba(10,15,28,0.74) 35%, rgba(17,24,39,0.70) 65%, rgba(2,6,23,0.82) 100%)`,
   backdropFilter: "blur(8px)",
   WebkitBackdropFilter: "blur(8px)",
   zIndex: 0,
@@ -1060,7 +1088,6 @@ const buttonStyle = {
   fontWeight: "bold",
   cursor: "pointer",
   boxShadow: "0 10px 24px rgba(37,99,235,0.34)",
-  transition: "transform 0.2s ease, box-shadow 0.2s ease",
 };
 
 const secondaryButtonStyle = {
