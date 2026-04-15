@@ -54,6 +54,8 @@ export default function App() {
   // Personel arama & detay
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [showEmpListModal, setShowEmpListModal] = useState(false);
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState(null); // {dateStr, leaves}
 
   const [authForm, setAuthForm] = useState({ email: "", password: "", full_name: "" });
   const [form, setForm] = useState(EMPTY_LEAVE_FORM);
@@ -299,48 +301,46 @@ export default function App() {
     await loadAll();
   }
 
-  // Doğum günü tarayıcı bildirimi (3 gün öncesinden)
+  // Doğum günü tarayıcı bildirimi — sadece izin zaten verilmişse gönder
   useEffect(() => {
     if (!session || employees.length === 0) return;
     if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return; // otomatik izin isteme — Android siyah ekran yapar
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const upcoming = employees.filter((emp) => {
-      if (!emp.birth_date) return false;
+    employees.forEach((emp) => {
+      if (!emp.birth_date) return;
       const b = new Date(emp.birth_date);
       const next = new Date(today.getFullYear(), b.getMonth(), b.getDate());
       if (next < today) next.setFullYear(today.getFullYear() + 1);
       const d = Math.floor((next - today) / (1000 * 60 * 60 * 24));
-      return d >= 0 && d <= 3;
+      if (d < 0 || d > 3) return;
+      new Notification("🎂 Doğum Günü Hatırlatma", {
+        body: d === 0
+          ? `Bugün ${emp.full_name}'in doğum günü! 🎉`
+          : `${emp.full_name}'in doğum günü ${d} gün sonra!`,
+        icon: "/favicon.svg",
+      });
     });
-
-    if (upcoming.length === 0) return;
-
-    function sendNotifs() {
-      upcoming.forEach((emp) => {
-        const b = new Date(emp.birth_date);
-        const next = new Date(today.getFullYear(), b.getMonth(), b.getDate());
-        if (next < today) next.setFullYear(today.getFullYear() + 1);
-        const d = Math.floor((next - today) / (1000 * 60 * 60 * 24));
-        new Notification("🎂 Doğum Günü Hatırlatma", {
-          body: d === 0
-            ? `Bugün ${emp.full_name}'in doğum günü! 🎉`
-            : `${emp.full_name}'in doğum günü ${d} gün sonra!`,
-          icon: "/favicon.svg",
-        });
-      });
-    }
-
-    if (Notification.permission === "granted") {
-      sendNotifs();
-    } else if (Notification.permission !== "denied") {
-      Notification.requestPermission().then((perm) => {
-        if (perm === "granted") sendNotifs();
-      });
-    }
   }, [session, employees]);
+
+  // Kullanıcı butonuna basınca bildirim izni iste (Android uyumlu — kullanıcı etkileşimi gerekir)
+  function requestNotifPermission() {
+    if (!("Notification" in window)) {
+      addToast("Bu tarayıcı bildirimleri desteklemiyor.", "error");
+      return;
+    }
+    if (Notification.permission === "granted") {
+      addToast("Bildirimler zaten açık.", "info");
+      return;
+    }
+    Notification.requestPermission().then((perm) => {
+      if (perm === "granted") addToast("Bildirimler açıldı! 🔔", "success");
+      else addToast("Bildirim izni verilmedi.", "error");
+    });
+  }
 
   // CSV İndir
   function downloadCSV() {
@@ -501,6 +501,15 @@ export default function App() {
                 {new Date().toLocaleDateString("tr-TR")}
               </div>
             </div>
+            {session && (
+              <button
+                onClick={requestNotifPermission}
+                style={{ ...logoutButtonStyle, padding: "11px 14px", fontSize: 18 }}
+                title="Doğum günü bildirimlerini aç"
+              >
+                🔔
+              </button>
+            )}
             {!session ? (
               <button onClick={() => setShowLoginModal(true)} style={logoutButtonStyle}>
                 Giriş
@@ -520,7 +529,7 @@ export default function App() {
               <Card
                 title="👥 Personel"
                 value={employees.length}
-                onClick={() => scrollToRef(employeeSectionRef)}
+                onClick={() => setShowEmpListModal(true)}
               />
               <Card
                 title="🎂 Bugün"
@@ -710,6 +719,7 @@ export default function App() {
                 leaveRequests={leaveRequests}
                 calendarDate={calendarDate}
                 setCalendarDate={setCalendarDate}
+                onDayClick={(day) => setSelectedCalendarDay(day)}
               />
             </Section>
 
@@ -1222,6 +1232,102 @@ export default function App() {
         </div>
       )}
 
+      {/* Tüm Personel Listesi Modalı */}
+      {showEmpListModal && (
+        <div style={modalBackdropStyle} onClick={() => setShowEmpListModal(false)}>
+          <div style={{ ...modalCardStyle, maxWidth: 500 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ marginBottom: 16 }}>
+              <div style={headerTopLineStyle}>KPI</div>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
+                Tüm Personel ({employees.length})
+              </h2>
+            </div>
+            <div style={{ maxHeight: 420, overflowY: "auto", display: "grid", gap: 8 }}>
+              {employees.map((emp, i) => (
+                <div
+                  key={emp.id}
+                  style={{
+                    ...empLeaveRowStyle,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    cursor: "pointer",
+                  }}
+                  onClick={() => { setShowEmpListModal(false); setSelectedEmployee(emp); }}
+                >
+                  <div style={{
+                    width: 32, height: 32, borderRadius: "50%",
+                    background: "linear-gradient(135deg,#1d4ed8,#3b82f6)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 13, fontWeight: 800, flexShrink: 0,
+                  }}>
+                    {i + 1}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{emp.full_name}</div>
+                    <div style={{ fontSize: 12, opacity: 0.6 }}>
+                      {emp.birth_date ? formatDateTR(emp.birth_date) : ""}
+                      {emp.phone ? ` • ${emp.phone}` : ""}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowEmpListModal(false)}
+              style={{ ...secondaryButtonStyle, marginTop: 16, width: "100%" }}
+            >
+              Kapat
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Takvim Gün Detay Modalı */}
+      {selectedCalendarDay && (
+        <div style={modalBackdropStyle} onClick={() => setSelectedCalendarDay(null)}>
+          <div style={{ ...modalCardStyle, maxWidth: 500 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ marginBottom: 16 }}>
+              <div style={headerTopLineStyle}>İzin Takvimi</div>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
+                {new Date(selectedCalendarDay.dateStr).toLocaleDateString("tr-TR", {
+                  day: "numeric", month: "long", year: "numeric",
+                })}
+              </h2>
+              <div style={{ fontSize: 13, opacity: 0.6, marginTop: 4 }}>
+                {selectedCalendarDay.leaves.length} kişi izinli
+              </div>
+            </div>
+            <div style={{ display: "grid", gap: 10, maxHeight: 400, overflowY: "auto" }}>
+              {selectedCalendarDay.leaves.map((lr) => (
+                <div key={lr.id} style={empLeaveRowStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{lr.employees?.full_name || "-"}</div>
+                    <span style={getStatusBadgeStyle(lr.status)}>{lr.status}</span>
+                  </div>
+                  <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ ...calendarChipStyle(lr.leave_type), fontSize: 12 }}>{lr.leave_type}</span>
+                    <span style={{ fontSize: 12, opacity: 0.65 }}>
+                      {formatDateTR(lr.start_date)} → {formatDateTR(lr.end_date)}
+                      <span style={{ marginLeft: 6, color: "#93c5fd", fontWeight: 700 }}>
+                        {calcDays(lr.start_date, lr.end_date)}
+                      </span>
+                    </span>
+                  </div>
+                  {lr.note && <div style={{ fontSize: 12, opacity: 0.55, marginTop: 4 }}>{lr.note}</div>}
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setSelectedCalendarDay(null)}
+              style={{ ...secondaryButtonStyle, marginTop: 16, width: "100%" }}
+            >
+              Kapat
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Personel Detay Modalı */}
       {selectedEmployee && (
         <div style={modalBackdropStyle} onClick={() => setSelectedEmployee(null)}>
@@ -1516,7 +1622,7 @@ function LeaveStats({ leaveRequests, employees }) {
 
 // ─── LeaveCalendar ───────────────────────────────────────────
 
-function LeaveCalendar({ leaveRequests, calendarDate, setCalendarDate }) {
+function LeaveCalendar({ leaveRequests, calendarDate, setCalendarDate, onDayClick }) {
   const year = calendarDate.getFullYear();
   const month = calendarDate.getMonth();
 
@@ -1573,6 +1679,7 @@ function LeaveCalendar({ leaveRequests, calendarDate, setCalendarDate }) {
           return (
             <div
               key={day}
+              onClick={() => leaves.length > 0 && onDayClick && onDayClick({ dateStr, leaves })}
               style={{
                 ...calendarCellStyle,
                 background: isToday
@@ -1583,6 +1690,8 @@ function LeaveCalendar({ leaveRequests, calendarDate, setCalendarDate }) {
                 border: isToday
                   ? "1px solid rgba(96,165,250,0.55)"
                   : "1px solid rgba(255,255,255,0.06)",
+                cursor: leaves.length > 0 ? "pointer" : "default",
+                transition: "background 0.15s ease",
               }}
             >
               <div
@@ -1596,14 +1705,23 @@ function LeaveCalendar({ leaveRequests, calendarDate, setCalendarDate }) {
                 {day}
               </div>
 
-              {leaves.slice(0, 3).map((lr) => (
+              {leaves.slice(0, 2).map((lr) => (
                 <div key={lr.id} style={calendarChipStyle(lr.leave_type)}>
                   {(lr.employees?.full_name || "?").split(" ")[0]}
                 </div>
               ))}
-              {leaves.length > 3 && (
-                <div style={{ fontSize: 10, opacity: 0.55, marginTop: 2 }}>
-                  +{leaves.length - 3}
+              {leaves.length > 2 && (
+                <div style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#93c5fd",
+                  marginTop: 2,
+                  background: "rgba(37,99,235,0.2)",
+                  borderRadius: 4,
+                  padding: "1px 4px",
+                  display: "inline-block",
+                }}>
+                  +{leaves.length - 2} daha
                 </div>
               )}
             </div>
