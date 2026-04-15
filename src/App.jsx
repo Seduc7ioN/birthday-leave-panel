@@ -56,6 +56,7 @@ export default function App() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [showEmpListModal, setShowEmpListModal] = useState(false);
   const [selectedCalendarDay, setSelectedCalendarDay] = useState(null); // {dateStr, leaves}
+  const [showTodayLeaveModal, setShowTodayLeaveModal] = useState(false);
 
   const [authForm, setAuthForm] = useState({ email: "", password: "", full_name: "" });
   const [form, setForm] = useState(EMPTY_LEAVE_FORM);
@@ -556,7 +557,8 @@ export default function App() {
               <Card
                 title="🏖️ Bugün İzinli"
                 value={todayOnLeaveCount}
-                onClick={() => openLeaveSectionWithFilter("", "")}
+                onClick={() => setShowTodayLeaveModal(true)}
+                accent={todayOnLeaveCount > 0 ? "amber" : undefined}
               />
               <Card
                 title="📅 Bu Ay İzin (gün)"
@@ -567,111 +569,6 @@ export default function App() {
                 title="🏆 En Çok İzinli"
                 value={topLeaveEmployee ? `${topLeaveEmployee.name} (${topLeaveEmployee.days}g)` : "-"}
               />
-            </div>
-
-            {/* Employee Section */}
-            <div ref={employeeSectionRef}>
-              <Section
-                title={`👥 Personel Listesi (${filteredEmployees.length})`}
-                action={
-                  <button onClick={openAddEmployee} style={buttonStyle}>
-                    + Personel Ekle
-                  </button>
-                }
-              >
-                <input
-                  placeholder="İsim veya telefon ara..."
-                  value={employeeSearch}
-                  onChange={(e) => setEmployeeSearch(e.target.value)}
-                  style={{ ...inputStyle, marginBottom: 14 }}
-                />
-                {loading ? (
-                  <LoadingSkeleton rows={3} />
-                ) : filteredEmployees.length === 0 ? (
-                  <p style={{ opacity: 0.6, margin: 0 }}>Personel bulunamadı.</p>
-                ) : (
-                  <>
-                    <div className="desktop-table" style={{ overflowX: "auto" }}>
-                      <table style={tableStyle}>
-                        <thead>
-                          <tr>
-                            <th style={thStyle}>Ad Soyad</th>
-                            <th style={thStyle}>Doğum Tarihi</th>
-                            <th style={thStyle}>Telefon</th>
-                            <th style={thStyle}>İşlem</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredEmployees.map((emp) => (
-                            <tr
-                              key={emp.id}
-                              className="table-row"
-                              onClick={() => setSelectedEmployee(emp)}
-                              style={{ cursor: "pointer" }}
-                            >
-                              <td style={{ ...tdStyle, fontWeight: 600 }}>{emp.full_name}</td>
-                              <td style={tdStyle}>
-                                {emp.birth_date ? formatDateTR(emp.birth_date) : "-"}
-                              </td>
-                              <td style={tdStyle}>{emp.phone || "-"}</td>
-                              <td style={tdStyle}>
-                                <div style={{ display: "flex", gap: 6 }}>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); openEditEmployee(emp); }}
-                                    style={smallButtonStyle}
-                                  >
-                                    Düzenle
-                                  </button>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); deleteEmployee(emp.id); }}
-                                    style={{ ...smallButtonStyle, background: "rgba(127,29,29,0.75)", borderColor: "rgba(248,113,113,0.2)" }}
-                                  >
-                                    Sil
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="mobile-cards">
-                      {filteredEmployees.map((emp) => (
-                        <div
-                          key={emp.id}
-                          style={{ ...mobileLeaveCardStyle, cursor: "pointer" }}
-                          onClick={() => setSelectedEmployee(emp)}
-                        >
-                          <div style={{ fontWeight: "bold", marginBottom: 8 }}>{emp.full_name}</div>
-                          <div style={mobileRowStyle}>
-                            <span style={mobileLabelStyle}>Doğum</span>
-                            <span>{emp.birth_date ? formatDateTR(emp.birth_date) : "-"}</span>
-                          </div>
-                          <div style={mobileRowStyle}>
-                            <span style={mobileLabelStyle}>Telefon</span>
-                            <span>{emp.phone || "-"}</span>
-                          </div>
-                          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); openEditEmployee(emp); }}
-                              style={smallButtonStyle}
-                            >
-                              Düzenle
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); deleteEmployee(emp.id); }}
-                              style={{ ...smallButtonStyle, background: "rgba(127,29,29,0.75)" }}
-                            >
-                              Sil
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </Section>
             </div>
 
             {/* Birthday Section */}
@@ -1235,44 +1132,69 @@ export default function App() {
       {/* Tüm Personel Listesi Modalı */}
       {showEmpListModal && (
         <div style={modalBackdropStyle} onClick={() => setShowEmpListModal(false)}>
-          <div style={{ ...modalCardStyle, maxWidth: 500 }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ marginBottom: 16 }}>
-              <div style={headerTopLineStyle}>KPI</div>
-              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
-                Tüm Personel ({employees.length})
-              </h2>
+          <div style={{ ...modalCardStyle, maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 10 }}>
+              <div>
+                <div style={headerTopLineStyle}>Personel Yönetimi</div>
+                <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
+                  Personel Listesi ({filteredEmployees.length})
+                </h2>
+              </div>
+              <button
+                onClick={() => { openAddEmployee(); }}
+                style={buttonStyle}
+              >
+                + Ekle
+              </button>
             </div>
-            <div style={{ maxHeight: 420, overflowY: "auto", display: "grid", gap: 8 }}>
-              {employees.map((emp, i) => (
-                <div
-                  key={emp.id}
-                  style={{
-                    ...empLeaveRowStyle,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    cursor: "pointer",
-                  }}
-                  onClick={() => { setShowEmpListModal(false); setSelectedEmployee(emp); }}
-                >
-                  <div style={{
-                    width: 32, height: 32, borderRadius: "50%",
-                    background: "linear-gradient(135deg,#1d4ed8,#3b82f6)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 13, fontWeight: 800, flexShrink: 0,
-                  }}>
-                    {i + 1}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{emp.full_name}</div>
-                    <div style={{ fontSize: 12, opacity: 0.6 }}>
-                      {emp.birth_date ? formatDateTR(emp.birth_date) : ""}
-                      {emp.phone ? ` • ${emp.phone}` : ""}
+
+            <input
+              placeholder="İsim veya telefon ara..."
+              value={employeeSearch}
+              onChange={(e) => setEmployeeSearch(e.target.value)}
+              style={{ ...inputStyle, marginBottom: 12 }}
+            />
+
+            <div style={{ maxHeight: 460, overflowY: "auto", display: "grid", gap: 8 }}>
+              {loading ? (
+                <LoadingSkeleton rows={4} />
+              ) : filteredEmployees.length === 0 ? (
+                <p style={{ opacity: 0.6, margin: 0 }}>Personel bulunamadı.</p>
+              ) : (
+                filteredEmployees.map((emp) => (
+                  <div
+                    key={emp.id}
+                    style={{ ...empLeaveRowStyle, display: "flex", alignItems: "center", gap: 12 }}
+                  >
+                    <div
+                      style={{ flex: 1, cursor: "pointer" }}
+                      onClick={() => { setShowEmpListModal(false); setSelectedEmployee(emp); }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{emp.full_name}</div>
+                      <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2 }}>
+                        {emp.birth_date ? `🎂 ${formatDateTR(emp.birth_date)}` : ""}
+                        {emp.phone ? `  📞 ${emp.phone}` : ""}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      <button
+                        onClick={() => { openEditEmployee(emp); }}
+                        style={smallButtonStyle}
+                      >
+                        Düzenle
+                      </button>
+                      <button
+                        onClick={() => deleteEmployee(emp.id)}
+                        style={{ ...smallButtonStyle, background: "rgba(127,29,29,0.75)", borderColor: "rgba(248,113,113,0.2)" }}
+                      >
+                        Sil
+                      </button>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
+
             <button
               onClick={() => setShowEmpListModal(false)}
               style={{ ...secondaryButtonStyle, marginTop: 16, width: "100%" }}
@@ -1282,6 +1204,61 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Bugün İzinli Modalı */}
+      {showTodayLeaveModal && (() => {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const todayLeaves = leaveRequests.filter(
+          (lr) =>
+            lr.status !== "Reddedildi" &&
+            lr.start_date <= todayStr &&
+            lr.end_date >= todayStr
+        );
+        return (
+          <div style={modalBackdropStyle} onClick={() => setShowTodayLeaveModal(false)}>
+            <div style={{ ...modalCardStyle, maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ marginBottom: 16 }}>
+                <div style={headerTopLineStyle}>
+                  {new Date().toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" })}
+                </div>
+                <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
+                  🏖️ Bugün İzinli ({todayLeaves.length})
+                </h2>
+              </div>
+              {todayLeaves.length === 0 ? (
+                <p style={{ opacity: 0.6, margin: 0 }}>Bugün izinli kimse yok.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10, maxHeight: 420, overflowY: "auto" }}>
+                  {todayLeaves.map((lr) => (
+                    <div key={lr.id} style={empLeaveRowStyle}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                        <div style={{ fontWeight: 700, fontSize: 15 }}>{lr.employees?.full_name || "-"}</div>
+                        <span style={getStatusBadgeStyle(lr.status)}>{lr.status}</span>
+                      </div>
+                      <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <span style={{ ...calendarChipStyle(lr.leave_type), fontSize: 12 }}>{lr.leave_type}</span>
+                        <span style={{ fontSize: 12, opacity: 0.65 }}>
+                          {formatDateTR(lr.start_date)} → {formatDateTR(lr.end_date)}
+                          <span style={{ marginLeft: 6, color: "#93c5fd", fontWeight: 700 }}>
+                            {calcDays(lr.start_date, lr.end_date)}
+                          </span>
+                        </span>
+                      </div>
+                      {lr.note && <div style={{ fontSize: 12, opacity: 0.55, marginTop: 4 }}>{lr.note}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button
+                onClick={() => setShowTodayLeaveModal(false)}
+                style={{ ...secondaryButtonStyle, marginTop: 16, width: "100%" }}
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Takvim Gün Detay Modalı */}
       {selectedCalendarDay && (
