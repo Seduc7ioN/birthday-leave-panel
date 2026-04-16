@@ -57,6 +57,7 @@ export default function App() {
   const [showEmpListModal, setShowEmpListModal] = useState(false);
   const [selectedCalendarDay, setSelectedCalendarDay] = useState(null); // {dateStr, leaves}
   const [showTodayLeaveModal, setShowTodayLeaveModal] = useState(false);
+  const [showPendingLeaveModal, setShowPendingLeaveModal] = useState(false);
 
   const [authForm, setAuthForm] = useState({ email: "", password: "", full_name: "" });
   const [form, setForm] = useState(EMPTY_LEAVE_FORM);
@@ -551,7 +552,7 @@ export default function App() {
               <Card
                 title="📝 Bekleyen İzin"
                 value={pendingCount}
-                onClick={() => openLeaveSectionWithFilter("Bekliyor", "")}
+                onClick={() => setShowPendingLeaveModal(true)}
                 accent={pendingCount > 0 ? "amber" : undefined}
               />
               <Card
@@ -1251,6 +1252,71 @@ export default function App() {
               )}
               <button
                 onClick={() => setShowTodayLeaveModal(false)}
+                style={{ ...secondaryButtonStyle, marginTop: 16, width: "100%" }}
+              >
+                Kapat
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Bekleyen İzin Modalı */}
+      {showPendingLeaveModal && (() => {
+        const pendingLeaves = leaveRequests
+          .filter((lr) => lr.status === "Bekliyor")
+          .sort((a, b) => a.start_date < b.start_date ? -1 : 1);
+        return (
+          <div style={modalBackdropStyle} onClick={() => setShowPendingLeaveModal(false)}>
+            <div style={{ ...modalCardStyle, maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ marginBottom: 16 }}>
+                <div style={headerTopLineStyle}>Onay Bekliyor</div>
+                <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800 }}>
+                  📝 Bekleyen İzinler ({pendingLeaves.length})
+                </h2>
+              </div>
+
+              {pendingLeaves.length === 0 ? (
+                <p style={{ opacity: 0.6, margin: 0 }}>Bekleyen izin talebi yok.</p>
+              ) : (
+                <div style={{ display: "grid", gap: 10, maxHeight: 440, overflowY: "auto" }}>
+                  {pendingLeaves.map((lr) => (
+                    <div key={lr.id} style={empLeaveRowStyle}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                        <div style={{ fontWeight: 700, fontSize: 15 }}>{lr.employees?.full_name || "-"}</div>
+                        <span style={getStatusBadgeStyle(lr.status)}>{lr.status}</span>
+                      </div>
+                      <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <span style={{ ...calendarChipStyle(lr.leave_type), fontSize: 12 }}>{lr.leave_type}</span>
+                        <span style={{ fontSize: 12, opacity: 0.65 }}>
+                          {formatDateTR(lr.start_date)} → {formatDateTR(lr.end_date)}
+                          <span style={{ marginLeft: 6, color: "#93c5fd", fontWeight: 700 }}>
+                            {calcDays(lr.start_date, lr.end_date)}
+                          </span>
+                        </span>
+                      </div>
+                      {lr.note && <div style={{ fontSize: 12, opacity: 0.55, marginTop: 4 }}>{lr.note}</div>}
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <button
+                          onClick={() => { updateStatus(lr.id, "Onaylandı"); setShowPendingLeaveModal(false); }}
+                          style={{ ...smallButtonStyle, background: "rgba(20,83,45,0.8)", borderColor: "rgba(74,222,128,0.2)" }}
+                        >
+                          ✓ Onayla
+                        </button>
+                        <button
+                          onClick={() => { updateStatus(lr.id, "Reddedildi"); setShowPendingLeaveModal(false); }}
+                          style={{ ...smallButtonStyle, background: "rgba(127,29,29,0.75)", borderColor: "rgba(248,113,113,0.2)" }}
+                        >
+                          ✗ Reddet
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button
+                onClick={() => setShowPendingLeaveModal(false)}
                 style={{ ...secondaryButtonStyle, marginTop: 16, width: "100%" }}
               >
                 Kapat
