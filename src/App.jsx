@@ -230,6 +230,18 @@ export default function App() {
       return;
     }
 
+    const overlap = leaveRequests.find(
+      (lr) =>
+        lr.employee_id === form.employee_id &&
+        lr.status !== "Reddedildi" &&
+        lr.start_date <= form.end_date &&
+        lr.end_date >= form.start_date
+    );
+    if (overlap) {
+      setSaveMessage(`⚠️ Bu personelin ${formatDateTR(overlap.start_date)} - ${formatDateTR(overlap.end_date)} tarihlerinde zaten izni var.`);
+      return;
+    }
+
     const { error } = await supabase.from("leave_requests").insert({
       employee_id: form.employee_id,
       leave_type: form.leave_type,
@@ -1499,8 +1511,8 @@ function BirthdayList({ items, emptyText, showUpcoming = false }) {
           </div>
           <div style={{ fontSize: 13, opacity: 0.72, marginBottom: 10 }}>
             {showUpcoming
-              ? `${formatBirthday(item.birth_date)} • ${item.daysLeft} gün kaldı`
-              : formatBirthday(item.birth_date)}
+              ? `${formatBirthday(item.birth_date)} • ${item.daysLeft} gün kaldı • ${calcAge(item.birth_date) + 1} yaşına giriyor`
+              : `${formatBirthday(item.birth_date)} • ${calcAge(item.birth_date)} yaşında`}
           </div>
           <button
             onClick={() => openBirthdayWhatsApp(item)}
@@ -1861,6 +1873,17 @@ function formatBirthday(dateStr) {
   return d.toLocaleDateString("tr-TR", { day: "2-digit", month: "long" });
 }
 
+function calcAge(birthDateStr) {
+  const today = new Date();
+  const birth = new Date(birthDateStr);
+  let age = today.getFullYear() - birth.getFullYear();
+  const notYet =
+    today.getMonth() < birth.getMonth() ||
+    (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate());
+  if (notYet) age--;
+  return age;
+}
+
 function formatDateTR(dateStr) {
   const d = new Date(dateStr);
   return d.toLocaleDateString("tr-TR");
@@ -1877,7 +1900,8 @@ function openBirthdayWhatsApp(person) {
   if (phone.startsWith("0")) phone = phone.slice(1);
   if (!phone.startsWith("90")) phone = `90${phone}`;
 
-  const text = `İyi ki doğdun ${person.full_name}! Sağlık, mutluluk ve başarı dolu nice güzel yaşların olsun 🎉🎂`;
+  const age = calcAge(person.birth_date) + 1;
+  const text = `İyi ki doğdun ${person.full_name}! ${age}. yaşın kutlu olsun, sağlık, mutluluk ve başarı dolu nice güzel yaşların olsun 🎉🎂`;
   const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
   window.open(url, "_blank");
 }
